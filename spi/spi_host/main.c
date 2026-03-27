@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <unistd.h>
 #include "spi_lib.h"
 
 #define SPI_NOP 0x00

@@ -5,6 +5,8 @@
 */
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include "../../spi/spi_host/spi_lib.h"
 
 #define SPI_NOP 0x00
@@ -36,7 +38,8 @@ int main()
    uint32_t mat1[4] = {10, 0, 5, 2};
 
 
-   const int NB_ELEM_READ = 1<<14; //max 16KB firmware
+   // const int NB_ELEM_READ = 1<<14; //max 16KB firmware
+   #define NB_ELEM_READ (1<<14)
    uint8_t buffer_read[NB_ELEM_READ];
    FILE *file;
 
