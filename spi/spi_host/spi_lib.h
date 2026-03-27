@@ -1,6 +1,10 @@
 #ifndef SPI_LIB_H
 #define SPI_LIB_H
-#include <ftdi.h>
+#if defined(__has_include) && __has_include(<libftdi1/ftdi.h>)
+#  include <libftdi1/ftdi.h>
+#else
+#  include <ftdi.h>
+#endif
 
 // ftdi initialization taken from iceprog https://github.com/cliffordwolf/icestorm/blob/master/iceprog/iceprog.c
 // ---------------------------------------------------------
