@@ -20,7 +20,7 @@ start.o: start.S
 # lgcc / libgcc contains soft-float helpers (e.g. mulsi3)
 # nostartfiles avoids linking the default _start from crt0
 main.oo: main.o start.o script.lds
-	$(CC) -T script.lds -lgcc -nostartfiles start.o main.o -o main.oo
+	$(CC) $(ARCH_FLAGS) -T script.lds -lgcc -nostartfiles start.o main.o -o main.oo
 
 main: main.oo
 	$(OBJCOPY) -O binary main.oo main
