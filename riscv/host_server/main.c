@@ -26,10 +26,13 @@ int main()
    uint8_t no_param[3] = {0x0, 0x0, 0x0};
    uint8_t spi_status = 0;
    uint8_t data_read[3];
-   uint8_t val_led_red[3] = {0x0, 0x0, 0x1};
-   uint8_t val_led_green[3] = {0x0, 0x0, 0x2};
-   uint8_t val_led_yellow[3] = {0x0, 0x0, 0x3};
-   uint8_t val_led_white[3] = {0x0, 0x0, 0x7};
+   // val[0] が FPGA受信データの bits[15:8] に入る (LSBファースト受信)
+   // firmware側: value = read>>8 で取得 → bits[15:8] が value の下位バイト
+   // よって val[0] に色ビット(bit0=R,bit1=G,bit2=B)を入れる
+   uint8_t val_led_red[3]    = {0x1, 0x0, 0x0};
+   uint8_t val_led_green[3]  = {0x2, 0x0, 0x0};
+   uint8_t val_led_yellow[3] = {0x3, 0x0, 0x0};
+   uint8_t val_led_white[3]  = {0x7, 0x0, 0x0};
 
    //matrix multiplication
    //matrix index is | 0 1 |
@@ -37,8 +40,6 @@ int main()
    uint32_t mat0[4] = {1, 2, 3, 1};
    uint32_t mat1[4] = {10, 0, 5, 2};
 
-
-   // const int NB_ELEM_READ = 1<<14; //max 16KB firmware
    #define NB_ELEM_READ (1<<14)
    uint8_t buffer_read[NB_ELEM_READ];
    FILE *file;
@@ -99,15 +100,17 @@ int main()
 
    sleep(1);
    spi_send24b(SPI_POW, 125, &spi_status);
-   spi_read(data_read, &spi_status); // read data inversion
+   sleep(1); // CPUの計算を待つ
+   spi_read(data_read, &spi_status);
    printf("calulating 125^2 read: %d, status: 0x%x\n", data_read[0] + (data_read[1]<<8) + (data_read[2]<<16), spi_status);
 
    sleep(1);
    spi_send24b(SPI_FIBONACCI, 20, &spi_status); //a fibo too big will make a stack overflow
-   spi_read(data_read, &spi_status); // read data inversion
+   sleep(1); // CPUの計算を待つ
+   spi_read(data_read, &spi_status);
    printf("calculating fib(20) read: %d, status: 0x%x\n", data_read[0] + (data_read[1]<<8) + (data_read[2]<<16), spi_status);
 
-   sleep (1);
+   sleep(1);
    printf("sending the matrices\n");
    for (size_t i = 0; i < 4; i++) {
       spi_send24b(SPI_MATRIX_MULT, mat0[i], &spi_status);

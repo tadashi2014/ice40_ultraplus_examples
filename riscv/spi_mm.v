@@ -20,7 +20,8 @@ module spi_mm(input wire clk, input wire reset,
       input wire rd_req, input wire [31:0] rd_addr, output reg [31:0] rd_data, output reg data_valid,
       input wire wr_req, input wire [31:0] wr_addr, input wire [31:0] wr_data,
       output reg firm_wr, output reg [15:0] firm_data, input wire firm_ack,
-      output reg cpu_start, input wire cpu_start_ack
+      output reg cpu_start, input wire cpu_start_ack,
+      output reg cpu_init, input wire cpu_init_ack   // INIT受信時にtop.vへ通知
    );
 
    //dedicated spi signals
@@ -58,6 +59,7 @@ module spi_mm(input wire clk, input wire reset,
       firm_wr = 0;
       firm_data = 0;
       cpu_start = 0;
+      cpu_init = 0;
    end
 
    always @(posedge clk)
@@ -66,9 +68,10 @@ module spi_mm(input wire clk, input wire reset,
          wr_en <= 0;
          spi_module_wr_data <= 0;
          rd_ack <= 0;
-         // cpu_start <= 0;
+         cpu_start <= 0;
+         cpu_init <= 0;
 
-         status_register <= {1, 31'h0};
+         status_register <= 32'h0;
          read_data_register <= 0;
          assert_read_register <= 0;
          write_data_register <= 0;
@@ -86,17 +89,25 @@ module spi_mm(input wire clk, input wire reset,
          if(rd_data_available == 1 && status_register[0] == 0) begin
             if(spi_module_rd_data[7:0] == 8'h0) begin //NOP, does nothing, is not taken into accounts
                rd_ack <= 1;
+            end else if(spi_module_rd_data[7:0] == 8'h1) begin //INIT: reset firmware address counter
+               // BUG FIX: cpu_init が既に 1 の場合も rd_ack を出してスタックを防ぐ。
+               // 修正前: cpu_init==1 のときは rd_ack が出ず spi_slave の
+               // rd_data_available がクリアされないため、以降のコマンドが全てブロック
+               // されてしまっていた。cpu_init のクリアは top.v の cpu_init_ack に
+               // 任せるのでここでは常に rd_ack を出す。
+               cpu_init <= 1;
+               rd_ack <= 1; // FIX: cpu_init==1 でも必ず rd_ack を返す
             end else if(spi_module_rd_data[7:0] == 8'h2) begin //something needs to be written in memory
-               if(firm_wr == 0) begin
-                  firm_wr <= 1;
-                  rd_ack <= 1;
-                  firm_data <= spi_module_rd_data[23:8];
-               end
+               // BUG FIX: firm_wr が既に 1 の場合も rd_ack を出す。
+               // 修正前: firm_wr==1 のときは rd_ack が出ずブロックしていた。
+               // firm_wr のクリアは top.v の firm_ack に任せる。
+               firm_wr <= 1;
+               rd_ack <= 1; // FIX: firm_wr==1 でも必ず rd_ack を返す
+               firm_data <= spi_module_rd_data[23:8];
             end else if (spi_module_rd_data[7:0] == 8'h3) begin
-               if(cpu_start == 0) begin
-                  cpu_start <= 1;
-                  rd_ack <= 1;
-               end
+               // BUG FIX: cpu_start が既に 1 の場合も rd_ack を出す。
+               cpu_start <= 1;
+               rd_ack <= 1; // FIX: cpu_start==1 でも必ず rd_ack を返す
             end else begin
                read_data_register <= spi_module_rd_data;
                rd_ack <= 1; //tells spi module that we have read the value
@@ -107,6 +118,11 @@ module spi_mm(input wire clk, input wire reset,
          //reset the cpu_start signal
          if(cpu_start_ack == 1 && cpu_start == 1) begin
             cpu_start <= 0;
+         end
+
+         //reset the cpu_init signal
+         if(cpu_init_ack == 1 && cpu_init == 1) begin
+            cpu_init <= 0;
          end
 
          if(firm_ack == 1 && firm_wr == 1) begin

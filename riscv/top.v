@@ -2,9 +2,10 @@
 `include "gpio_mm.v"
 `include "memory.v"
 `include "spi_mm.v"
+//`include "simple_cpu.v"
 `include "simple_riscv_cpu/simple_cpu/simple_cpu.v"
 
-module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, input SPI_SCK, input SPI_SS, input SPI_MOSI, output SPI_MISO, input [3:0] SW);
+module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, input SPI_SCK, input SPI_SS, input SPI_MOSI, output SPI_MISO);
 
    reg cpu_reset;
    wire cpu_read_req;
@@ -32,6 +33,8 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    reg spi_firm_ack;
    wire spi_cpu_start;
    reg spi_cpu_start_ack;
+   wire spi_cpu_init;
+   reg spi_cpu_init_ack;
 
    //signals for the gpio_mm
    reg gpio_reset;
@@ -57,7 +60,8 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       .rd_req(spi_rd_req), .rd_addr(spi_rd_addr), .rd_data(spi_rd_data), .data_valid(spi_rd_valid),
       .wr_req(spi_wr_req), .wr_addr(spi_wr_addr), .wr_data(spi_wr_data),
       .firm_wr(spi_firm_wr), .firm_data(spi_firm_data), .firm_ack(spi_firm_ack),
-      .cpu_start(spi_cpu_start), .cpu_start_ack(spi_cpu_start_ack)
+      .cpu_start(spi_cpu_start), .cpu_start_ack(spi_cpu_start_ack),
+      .cpu_init(spi_cpu_init), .cpu_init_ack(spi_cpu_init_ack)
    );
 
    simple_cpu simple_cpu_inst(.clk(clk), .reset(cpu_reset),
@@ -83,7 +87,7 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    parameter IDLE=0, INIT=IDLE+1, REQ_READ_SPI_STATUS=INIT+1, READ_SPI_STATUS=REQ_READ_SPI_STATUS+1,
             REQ_SPI_READ_DATA=READ_SPI_STATUS+1, SPI_READ_DATA=REQ_SPI_READ_DATA+1,
             WRITE_MEMORY=SPI_READ_DATA+1, READ_REQ_MEMORY=WRITE_MEMORY+1, READ_MEMORY=READ_REQ_MEMORY+1,
-            START_CPU=READ_MEMORY+1;
+            START_CPU=READ_MEMORY+1, INIT_CPU=START_CPU+1;
 
    reg [31:0] spi_recv_data_reg;
    reg handle_data;
@@ -100,14 +104,14 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       cpu_reset = 1; //cpu in reset at start
 
       spi_reset = 0;
-      spi_wr_en = 0;
+      spi_wr_req = 0;
       spi_wr_data = 0;
-      spi_rd_ack = 0;
 
       // led = 0;
       spi_recv_data_reg = 0;
       spi_firm_ack = 0;
       spi_cpu_start_ack = 0;
+      spi_cpu_init_ack = 0;
       handle_data = 0;
 
       state = REQ_READ_SPI_STATUS;
@@ -129,8 +133,6 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    begin
 
       //defaults
-      spi_rd_ack <= 0;
-      spi_wr_en <= 0;
       spi_firm_ack <= 0;
 
       gpio_wr_req <= 0;
@@ -144,6 +146,7 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       spi_rd_req <= 0;
       spi_rd_addr <= 0;
       spi_cpu_start_ack <= 0;
+      spi_cpu_init_ack <= 0;
 
       spi_wr_req <= 0;
       spi_wr_addr <= 0;
@@ -161,7 +164,10 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       INIT: begin
       end
       REQ_READ_SPI_STATUS: begin
-         if(spi_firm_wr == 1) begin //spi module received a special opcode to write firmware to ram
+         if(spi_cpu_init == 1) begin //INIT opcode: CPUリセット＆アドレスカウンタクリア
+            spi_cpu_init_ack <= 1;
+            state <= INIT_CPU;
+         end else if(spi_firm_wr == 1) begin //spi module received a special opcode to write firmware to ram
             spi_firm_ack <= 1;
             state <= WRITE_MEMORY;
          end else if (spi_cpu_start == 1) begin //special opcode to start CPU (deassert reset)
@@ -176,12 +182,6 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
             memory_wr_data <= {spi_firm_data[15:0], firmware_data_buf};
             memory_wr_req <= 1;
             memory_wr_addr <= {counter_firmware_address[13:1], 2'b00};
-
-            if({spi_firm_data[15:0], firmware_data_buf} == 32'h00e7a023 && {counter_firmware_address[13:1], 2'b00} == 16'h8) begin
-               gpio_wr_req <= 1;
-               gpio_wr_addr <= 0;
-               gpio_wr_data <= 32'b001;
-            end
          end
 
          counter_firmware_address <= counter_firmware_address + 1;
@@ -190,6 +190,13 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       end
       START_CPU: begin
          cpu_reset <= 0;
+         state <= REQ_READ_SPI_STATUS;
+      end
+      INIT_CPU: begin
+         // 2回目以降の ./host 実行に対応: CPUをリセットし書き込みアドレスをクリア
+         cpu_reset <= 1;
+         counter_firmware_address <= 0;
+         firmware_data_buf <= 0;
          state <= REQ_READ_SPI_STATUS;
       end
 

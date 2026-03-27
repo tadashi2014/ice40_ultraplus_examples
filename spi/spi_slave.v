@@ -90,8 +90,16 @@ module spi_slave(input wire clk, input wire reset,
                end
 
                if(counter_read >= 31) begin //finish recv
+                  // BUG FIX: INITオペコード受信時に rd_data と rd_data_available をセットする。
+                  // 修正前: state 遷移のみで rd_data_available=0 のまま。
+                  // spi_mm は rd_data_available==1 を条件に opcode 0x01 を検出して
+                  // cpu_init<=1 をセットするため、この fix がないと cpu_init は永遠に
+                  // 0 のままとなり、INIT_CPU ステートに入れず、2回目以降の ./host 実行で
+                  // counter_firmware_address がリセットされずファームウェアが壊れる。
                   if(rd_data_local[8:1] == 8'h1) begin //received init opcode, otherwise ignore
                      state_rd <= RD_WAIT_DATA;
+                     rd_data <= {mosi_reg[0], rd_data_local[31:1]};
+                     rd_data_available <= 1; // FIX: spi_mm に opcode 0x01 を通知
                   end
                   counter_read <= 0;
                end
