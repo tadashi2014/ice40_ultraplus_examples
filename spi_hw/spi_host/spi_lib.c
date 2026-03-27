@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include "spi_lib.h"
 
 static struct ftdi_context ftdic;
@@ -13,7 +15,7 @@ static void send_byte(uint8_t data)
   int rc = ftdi_write_data(&ftdic, &data, 1);
   if (rc != 1) {
      fprintf(stderr, "Write error (single byte, rc=%d, expected %d) data: 0x%x.\n", rc, 1, data);
-     error(2);
+     exit(2);
   }
 }
 
@@ -24,7 +26,7 @@ static uint8_t recv_byte()
      int rc = ftdi_read_data(&ftdic, &data, 1);
      if (rc < 0) {
         fprintf(stderr, "Read error.\n");
-        error(2);
+        exit(2);
      }
      if (rc == 1)
         break;
@@ -59,7 +61,7 @@ static void xfer_spi(uint8_t *data, int n)
   int rc = ftdi_write_data(&ftdic, data, n);
   if (rc != n) {
      fprintf(stderr, "Write error (chunk, rc=%d, expected %d).\n", rc, n);
-     error(2);
+     exit(2);
   }
 
   for (int i = 0; i < n; i++)
@@ -79,7 +81,7 @@ static void send_spi(uint8_t *data, int n)
   int rc = ftdi_write_data(&ftdic, data, n);
   if (rc != n) {
      fprintf(stderr, "Write error (chunk, rc=%d, expected %d).\n", rc, n);
-     error(2);
+     exit(2);
   }
 }
 
@@ -92,12 +94,6 @@ static void read_spi(uint8_t *data, int n)
   send_byte(MC_DATA_IN | MC_DATA_LSB /*| MC_DATA_OCN*/);
   send_byte(n - 1);
   send_byte((n - 1) >> 8);
-
-  // int rc = ftdi_write_data(&ftdic, data, n);
-  // if (rc != n) {
-  //    fprintf(stderr, "Write error (chunk, rc=%d, expected %d).\n", rc, n);
-  //    error(2);
-  // }
 
   for (int i = 0; i < n; i++)
      data[i] = recv_byte();
@@ -177,10 +173,10 @@ int spi_init()
 		return 1;
 	}
 
-	if (ftdi_usb_purge_buffers(&ftdic)) {
-		fprintf(stderr, "Failed to purge buffers on iCE FTDI USB device.\n");
-		return 1;
-	}
+	if (ftdi_tcioflush(&ftdic)) {
+      fprintf(stderr, "Failed to purge buffers on iCE FTDI USB device.\n");
+      return 1;
+   }
 
 	if (ftdi_get_latency_timer(&ftdic, &ftdi_latency) < 0) {
 		fprintf(stderr, "Failed to get latency timer (%s).\n", ftdi_get_error_string(&ftdic));
@@ -198,7 +194,7 @@ int spi_init()
 	/* Enter MPSSE (Multi-Protocol Synchronous Serial Engine) mode. Set all pins to output. */
 	if (ftdi_set_bitmode(&ftdic, 0xff, BITMODE_MPSSE) < 0) {
 		fprintf(stderr, "Failed to set BITMODE_MPSSE on iCE FTDI USB device.\n");
-		error(2);
+      return 1;
 	}
 
    //enable clock divide by 5 ==> 6MHz
@@ -234,8 +230,8 @@ int spi_command_send_32(uint8_t cmd, uint32_t val32b){
 int spi_command_send_recv(uint8_t cmd, uint8_t send_param[7], uint8_t recv_data[5])
 {
    uint8_t to_send[] = {cmd, send_param[0], send_param[1], send_param[2], send_param[3], send_param[4], send_param[5], send_param[6]};
-   uint retries = 0;
-   uint max_retries = 10;
+   unsigned retries = 0;
+   unsigned max_retries = 10;
 
    do{
       to_send[0] = cmd;
