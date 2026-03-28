@@ -1,45 +1,66 @@
-// RV32I ALU
-// control[3:0] = {instruction[30], funct3[2:0]}
-//
-// control | operation
-// --------+----------
-//  0000   | ADD
-//  1000   | SUB
-//  0001   | SLL  (shift left logical)
-//  0010   | SLT  (signed less-than)
-//  0011   | SLTU (unsigned less-than)
-//  0100   | XOR
-//  0101   | SRL  (shift right logical)
-//  1101   | SRA  (shift right arithmetic)
-//  0110   | OR
-//  0111   | AND
+// simple verilog implementation of an alu
 
-module alu(
-   input  wire [31:0] in1,
-   input  wire [31:0] in2,
-   input  wire  [3:0] control,
-   output reg  [31:0] out,
-   output wire        zero,
-   output wire        neg
+//allows to have unused signals
+/* verilator lint_off UNUSED */
+
+module alu(in1, in2, control, out, zero, neg
 );
 
-   assign zero = (out == 32'b0);
-   assign neg  = out[31];
+input wire [31:0] in1;
+input wire [31:0] in2;
+input wire [3:0] control; //operation selection, linked with riscv doc
+output reg [31:0] out;
+output wire zero; //is result equals to 0?
+output wire neg; //is result negative?
 
-   always @(*) begin
-      case (control)
-         4'b0000: out = in1 + in2;
-         4'b1000: out = in1 - in2;
-         4'b0001: out = in1 << in2[4:0];
-         4'b0010: out = ($signed(in1) < $signed(in2)) ? 32'b1 : 32'b0;
-         4'b0011: out = (in1 < in2)                   ? 32'b1 : 32'b0;
-         4'b0100: out = in1 ^ in2;
-         4'b0101: out = in1 >> in2[4:0];
-         4'b1101: out = $signed(in1) >>> in2[4:0];
-         4'b0110: out = in1 | in2;
-         4'b0111: out = in1 & in2;
-         default: out = 32'b0;
-      endcase
+reg [31:0] acc;
+
+assign zero = (acc == 32'h0);
+assign neg  = (acc[31] == 1'b1);
+
+always @*
+begin
+   if (control == 4'h0) begin //addition
+      acc = in1+in2;
+
+   end else if (control == 4'b1000) begin //sub
+      acc = in1-in2;
+
+   end else if (control == 4'b1001) begin //subs (signed sub)
+      acc = ($signed(in1)-$signed(in2));
+
+   end else if (control == 4'h1) begin //sll
+      acc = in1 << in2[4:0];
+
+   end else if (control == 4'h2) begin //slt
+      acc[0] = ($signed(in1) < $signed(in2));
+      acc[31:1] = 31'h0;
+
+   end else if (control == 4'h3) begin //sltu
+      acc[0] = (in1 < in2);
+      acc[31:1] = 31'h0;
+
+   end else if (control == 4'b0100) begin //xor
+      acc = in1 ^ in2;
+
+   end else if (control == 4'b0101) begin //srl
+      acc = in1 >> in2[4:0];
+
+   end else if (control == 4'b1101) begin //sra (arith. shift)
+      acc = $signed(in1) >>> in2[4:0];
+
+   end else if (control == 4'b0110) begin //or
+      acc = in1 | in2;
+
+   end else if (control == 4'b0111) begin //and
+      acc = in1 & in2;
+
+   end else begin
+      acc = 32'h0;
    end
+
+   out = acc;
+
+end
 
 endmodule
