@@ -7,7 +7,7 @@ AS      = $(RISCV_PREFIX)as
 OBJCOPY = $(RISCV_PREFIX)objcopy
 OBJDUMP = $(RISCV_PREFIX)objdump
 
-ARCH_FLAGS = -march=rv32i -mabi=ilp32 -O0
+ARCH_FLAGS = -march=rv32i -mabi=ilp32 -O0 -ffreestanding
 
 all: main
 
@@ -17,7 +17,7 @@ main.o: main.c
 start.o: start.S
 	$(AS) -march=rv32i -mabi=ilp32 start.S -o start.o
 
-# lgcc / libgcc contains soft-float helpers (e.g. mulsi3)
+# lgcc / libgcc (-lgcc) provides soft-multiply helpers (e.g. __mulsi3) for rv32i
 # nostartfiles avoids linking the default _start from crt0
 main.oo: main.o start.o script.lds
 	$(CC) $(ARCH_FLAGS) -T script.lds -lgcc -nostartfiles start.o main.o -o main.oo

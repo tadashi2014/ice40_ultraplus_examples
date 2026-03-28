@@ -3,8 +3,6 @@
    program to run on the riscv cpu
 */
 
-#include <math.h>
-
 #define SPI_ADDRESS  0x8000
 #define GPIO_ADDRESS 0x8100
 

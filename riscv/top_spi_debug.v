@@ -120,7 +120,8 @@ module top(input [3:0] SW, input clk,
    //
    // Diagnosis when Blue goes OFF (CPU started):
    //   Red ON , Green OFF → CPU running with firmware ✓ (proceed to production build)
-   //   Red ON , Green ON  → firmware WAS written but has bad opcode → check binary/byte order
+   //   Red ON , Green ON  → firmware WAS written but has bad opcode
+   //                         → rebuild firmware, check disassembly for unrecognized opcodes
    //   Red OFF, Green ON  → firmware was NEVER written → SPI_SEND_FIRMWARE failed entirely
    assign LED_B = cpu_reset ? 1'b0 : 1'b1;
    assign LED_R = firmware_loaded ? 1'b0 : 1'b1;

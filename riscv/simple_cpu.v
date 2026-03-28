@@ -212,6 +212,8 @@ begin : main
                read_1_en <= 1'b1;
                read_reg_1 <= read_data[19:15];
                future_state <= EX_SYS;
+            end else if ( read_data[6:0] == 7'b0001111 ) begin // FENCE / FENCE.I: no-op on in-order CPU
+               future_state <= IF_MEM;
             end else begin //not recognized
                error_instruction <= 1'b1;
                future_state <= IF_MEM;
