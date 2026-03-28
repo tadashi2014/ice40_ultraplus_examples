@@ -58,8 +58,8 @@ module memory(input wire clk, input wire reset,
 
    always @(*)
    begin
-      ram_addr_0 = {rd_addr[14:2], 2'b00}; //8K adressable words of 32bits
-      ram_addr_1 = {rd_addr[14:2], 2'b00};
+      ram_addr_0 = rd_addr[14:2]; //8K adressable words of 32bits
+      ram_addr_1 = rd_addr[14:2];
       if (wr_req == 1) begin
          ram_wren_0 = 1;
          ram_wren_1 = 1;
@@ -67,9 +67,9 @@ module memory(input wire clk, input wire reset,
          mask_wren_1 = 4'b1111;
          ram_data_in_0 = wr_data[15:0];
          ram_data_in_1 = wr_data[31:16];
-         ram_addr_0 = {wr_addr[14:2], 2'b00};
-         ram_addr_1 = {wr_addr[14:2], 2'b00};
-      end else if (wr_wreq == 0) begin
+         ram_addr_0 = wr_addr[14:2];
+         ram_addr_1 = wr_addr[14:2];
+      end else if (wr_req == 0) begin
          ram_wren_0 = 0;
          ram_wren_1 = 0;
          mask_wren_0 = 4'b0000;

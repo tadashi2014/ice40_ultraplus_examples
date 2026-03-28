@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <unistd.h>
 #include "spi_lib.h"
 
 #define SPI_NOP 0x00
@@ -30,7 +31,7 @@ int main()
    spi_read(data_read, &spi_status); // read data inversion
 
    for (size_t i = 0; i < 3; i++) {
-      printf("bit inversion read idx %i: 0x%x, should be 0x%x\n", i, data_read[i], 0xFF&~val_inv[i]);
+      printf("bit inversion read idx %zu: 0x%x, should be 0x%x\n", i, data_read[i], 0xFF&~val_inv[i]);
    }
    printf("status: 0x%x\n", spi_status);
 

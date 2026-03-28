@@ -72,6 +72,31 @@ gcc and newlib with the following parameters:
 make
 ```
 
+### macOS (Homebrew) prerequisites
+
+Install the required libraries for the host build:
+
+```
+brew install libftdi libusb pkg-config
+```
+
+The Homebrew RISC-V toolchain uses the `riscv64-unknown-elf-` prefix (despite targeting rv32i
+via compiler flags).  The firmware `Makefile` defaults to this prefix automatically, so no
+extra configuration is needed when using the Homebrew toolchain:
+
+```
+brew install riscv-gnu-toolchain
+# builds rv32i firmware with the riscv64-unknown-elf- prefix
+cd host_server/firmware
+make
+```
+
+To use a custom prefix (e.g. the `/opt/riscv` toolchain built above with the `riscv32-` prefix):
+
+```
+make RISCV_PREFIX=riscv32-unknown-elf-
+```
+
 ## System
 
 The system has a rv32i riscv soft cpu, a 32KB memory, a gpio module to drive a rgb led, and a memory mapped SPI module.

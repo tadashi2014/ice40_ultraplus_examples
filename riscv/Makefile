@@ -1,10 +1,10 @@
 filename = top
 pcf_file = ../common/io.pcf
-riscv_folder = ./simple_riscv_cpu/simple_cpu
+riscv_folder = ./simple_cpu
 
 build:
-	yosys -p "synth_ice40 -top top -json $(filename).json -blif $(filename).blif" $(filename).v $(riscv_folder)/alu/alu.v $(riscv_folder)/register_file/register_file.v
-	nextpnr-ice40 --up5k --json $(filename).json --pcf $(pcf_file) --asc $(filename).asc
+	yosys -p "synth_ice40 -top top -json $(filename).json -blif $(filename).blif" $(filename).v $(riscv_folder)/alu.v $(riscv_folder)/register_file.v
+	nextpnr-ice40 --up5k --json $(filename).json --pcf $(pcf_file) --asc $(filename).asc --package sg48
 	icepack $(filename).asc $(filename).bin
 
 prog:

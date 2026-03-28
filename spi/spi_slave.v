@@ -21,7 +21,7 @@ module spi_slave(input wire clk, input wire reset,
    reg wr_reg_full;
    reg [23:0] wr_data_reg; //written data to send to spi/miso
    reg wr_queue_full;
-   reg [23:0] wr_data_queue; //waiting to be written in the register, avoid a write while communcating with SPI
+   reg [23:0] wr_data_queue; //waiting to be written in the register
 
    reg buffer_rd_ack;
    reg [31:0] rd_data_local;
@@ -64,6 +64,7 @@ module spi_slave(input wire clk, input wire reset,
          rd_data <= 0;
          rd_data_local <= 0;
          rd_data_available <= 0;
+         buffer_rd_ack <= 0;
          state_rd <= INIT;
       end else begin
 
@@ -90,25 +91,26 @@ module spi_slave(input wire clk, input wire reset,
                end
 
                if(counter_read >= 31) begin //finish recv
-                  if(rd_data_local[8:1] == 8'h1) begin //received init opcode, otherwise ignore
+                  if(rd_data_local[8:1] == 8'h1) begin //received init opcode
                      state_rd <= RD_WAIT_DATA;
+                     // FIX1: INIT opcode を spi_mm に通知するため rd_data_available をセット。
+                     // 修正前はここで rd_data_available が 0 のままで、spi_mm が
+                     // cpu_init を立てられず、INIT_CPU ステートに入れなかった。
+                     rd_data <= {mosi_reg[0], rd_data_local[31:1]};
+                     rd_data_available <= 1;
                   end
                   counter_read <= 0;
                end
-
             end
          end
          RD_WAIT_DATA : begin
             if(spi_clk_rising_edge == 1'b1) begin
-               if(counter_read == 5 && rd_data_available == 0) begin //status, write master to slave successful
+               if(counter_read == 5 && rd_data_available == 0) begin //status OK
                   miso_out_reg <= 1;
                end
 
-               if (wr_reg_full == 1) begin //something ready to be written
-
-                  //bits 0-7 reserved for status, starting to write wr_data_reg
-                  //one clock before to be sent the next on miso
-                  if(counter_read == 6) begin //status, read master to slave successful
+               if (wr_reg_full == 1) begin //something ready to be written back to host
+                  if(counter_read == 6) begin
                      miso_out_reg <= 1;
                   end else if(counter_read >= 7 && counter_read < 31) begin
                      miso_out_reg <= wr_data_reg[0];
@@ -120,10 +122,9 @@ module spi_slave(input wire clk, input wire reset,
                counter_read <= counter_read + 1;
 
                if(counter_read >= 31) begin //finish recv
-
-                  if (wr_reg_full == 1) begin //something was written, now free
+                  if (wr_reg_full == 1) begin
                      wr_reg_full <= 0;
-                     wr_data_reg <= 24'h00; //clear write buffer
+                     wr_data_reg <= 24'h00;
                   end
 
                   if(rd_data_available == 0) begin
@@ -139,11 +140,20 @@ module spi_slave(input wire clk, input wire reset,
          end
          endcase
 
+         // rd_ack 受信を記録
          if(rd_ack == 1 && rd_data_available == 1 && buffer_rd_ack == 0) begin
             buffer_rd_ack <= 1;
          end
 
-         if(buffer_rd_ack == 1 && counter_read == 0) begin
+         // FIX2: counter_read==0 (SPI idle) の条件を外して即座にクリア。
+         // 修正前は「buffer_rd_ack==1 && counter_read==0」という条件で
+         // SPI idle になるまで rd_data_available がクリアされなかった。
+         // 次の SPI トランザクション開始と idle のタイミングが重なると
+         // rd_data_available が 1 のまま残り、次パケットを受信できず
+         // too many retries が発生していた。その結果ファームウェアに穴が
+         // 開き、CPU がハングする原因となっていた。
+         // 修正後は rd_ack を受け取った次のサイクルで即座にクリアされる。
+         if(buffer_rd_ack == 1) begin
             rd_data_available <= 0;
             buffer_rd_ack <= 0;
          end
