@@ -1,36 +1,39 @@
-// Self-test: a 5-instruction firmware ROM is embedded directly in this file.
-// No SPI, no SPRAM, no host computer required.
+// Self-test: 5-instruction ROM firmware embedded in bitstream (rom.v).
+// No SPI, no host computer required.
 //
-// The ROM drives the complete CPU pipeline:
-//   IF (fetch from ROM) -> ID (decode) -> EX (execute) -> WB -> GPIO write
+// Derived from top_timer_debug.v — the ONLY difference is that memory.v
+// (SPRAM) is replaced by rom.v (same interface, hardcoded instructions).
+// The bus controller is byte-for-byte identical to top_timer_debug.v so
+// we know the CPU<->memory timing is correct.
 //
-// Firmware (hard-coded in ROM):
-//   0x00: lui  a0, 8         (0x00008537)  a0 = 0x8000
-//   0x04: addi a0, a0, 256   (0x10050513)  a0 = 0x8100  (GPIO base addr)
-//   0x08: addi a1, x0, 1     (0x00100593)  a1 = 1
-//   0x0C: sw   a1, 0(a0)     (0x00B52023)  gpio_reg[0] = 1  -> LED_R ON
-//   0x10: jal  x0, 0         (0x0000006F)  infinite loop
+// Firmware (in rom.v):
+//   0x00: lui  a0, 8         -> a0 = 0x8000
+//   0x04: addi a0, a0, 256   -> a0 = 0x8100  (GPIO base)
+//   0x08: addi a1, x0, 1     -> a1 = 1
+//   0x0C: sw   a1, 0(a0)     -> gpio_reg[0]=1 => LED_R ON (active-low)
+//   0x10: jal  x0, 0         -> infinite loop
 //
 // LED behaviour (active-low: signal 0 = ON, signal 1 = OFF):
-//   LED_R ON  : CPU fetched, decoded, and executed the firmware correctly.
-//               GPIO path also works. Problem is in the SPI firmware-load path.
-//   LED_G ON  : cpu_error_instruction fired.  The ROM encoding has a bug
-//               (should never happen with the encodings above).
-//   LED_B ON  : CPU is still in power-on reset (only lasts a few clock cycles,
-//               effectively invisible to the naked eye).
+//   0 – 2 s : LED_B ON (cpu_reset held by timer)
+//   After 2 s:
+//     LED_R ON              -> CPU + ROM + GPIO all work ✓
+//                              Problem is ONLY in the SPI firmware-load path.
+//     LED_G ON, LED_R OFF   -> cpu_error_instruction fired (bad opcode from ROM)
+//     All OFF               -> CPU not executing (check rom.v / bus controller)
 //
 // Build and program:
 //   make selftest
 //   make prog_selftest
 
 `include "gpio_mm.v"
+`include "rom.v"
+`include "spi_mm.v"
 `include "simple_cpu.v"
 
 module top(input [3:0] SW, input clk,
            output LED_R, output LED_G, output LED_B,
            input SPI_SCK, input SPI_SS, input SPI_MOSI, output SPI_MISO);
 
-   // --- CPU interface ---
    reg cpu_reset;
    wire cpu_read_req;
    wire [31:0] cpu_read_addr;
@@ -43,7 +46,23 @@ module top(input [3:0] SW, input clk,
    wire cpu_error_instruction;
    wire [31:0] cpu_debug;
 
-   // --- GPIO interface ---
+   reg spi_reset;
+   reg spi_rd_req;
+   reg [31:0] spi_rd_addr;
+   wire [31:0] spi_rd_data;
+   wire spi_rd_valid;
+   reg spi_wr_req;
+   reg [31:0] spi_wr_addr;
+   reg [31:0] spi_wr_data;
+   wire spi_firm_wr;
+   wire [15:0] spi_firm_data;
+   reg spi_firm_ack;
+   wire spi_cpu_start;
+   reg spi_cpu_start_ack;
+   wire spi_cpu_init;
+   reg spi_cpu_init_ack;
+
+   reg gpio_reset;
    reg gpio_rd_req;
    reg [31:0] gpio_rd_addr;
    wire [31:0] gpio_rd_data;
@@ -51,16 +70,33 @@ module top(input [3:0] SW, input clk,
    reg gpio_wr_req;
    reg [31:0] gpio_wr_addr;
    reg [31:0] gpio_wr_data;
+
+   // ROM (replaces memory.v — same interface, hardcoded instructions)
+   reg rom_rd_req;
+   reg [31:0] rom_rd_addr;
+   wire [31:0] rom_rd_data;
+   wire rom_rd_valid;
+
+   // Timer: 12MHz clock, ~2 seconds = 24_000_000 counts
+   reg [24:0] timer;
+   reg timer_fired;
+
+   // Debug latches
+   reg cpu_ever_error;
+   reg cpu_ever_started;
+
    wire gpio_led_r, gpio_led_g, gpio_led_b;
 
-   // --- Debug latch: latches on if any error_instruction occurs ---
-   reg cpu_ever_error;
+   spi_mm spi_mm_inst(.clk(clk), .reset(spi_reset),
+      .SPI_SCK(SPI_SCK), .SPI_SS(SPI_SS), .SPI_MOSI(SPI_MOSI), .SPI_MISO(SPI_MISO),
+      .rd_req(spi_rd_req), .rd_addr(spi_rd_addr), .rd_data(spi_rd_data), .data_valid(spi_rd_valid),
+      .wr_req(spi_wr_req), .wr_addr(spi_wr_addr), .wr_data(spi_wr_data),
+      .firm_wr(spi_firm_wr), .firm_data(spi_firm_data), .firm_ack(spi_firm_ack),
+      .cpu_start(spi_cpu_start), .cpu_start_ack(spi_cpu_start_ack),
+      .cpu_init(spi_cpu_init), .cpu_init_ack(spi_cpu_init_ack)
+   );
 
-   // --- Power-on reset: hold reset for 16 clock cycles (~1.3 us at 12 MHz) ---
-   reg [3:0] rst_ctr;
-
-   simple_cpu simple_cpu_inst(
-      .clk(clk), .reset(cpu_reset),
+   simple_cpu simple_cpu_inst(.clk(clk), .reset(cpu_reset),
       .read_req(cpu_read_req), .read_addr(cpu_read_addr),
       .read_data(cpu_read_data), .read_data_valid(cpu_read_data_valid),
       .write_req(cpu_write_req), .write_addr(cpu_write_addr),
@@ -68,112 +104,146 @@ module top(input [3:0] SW, input clk,
       .error_instruction(cpu_error_instruction), .debug(cpu_debug)
    );
 
-   gpio_mm gpio_mm_inst(
-      .clk(clk), .reset(1'b0),
+   gpio_mm gpio_mm_inst(.clk(clk), .reset(gpio_reset),
       .LED_R(gpio_led_r), .LED_G(gpio_led_g), .LED_B(gpio_led_b),
       .rd_req(gpio_rd_req), .rd_addr(gpio_rd_addr),
       .rd_data(gpio_rd_data), .data_valid(gpio_rd_valid),
       .wr_req(gpio_wr_req), .wr_addr(gpio_wr_addr), .wr_data(gpio_wr_data)
    );
 
-   // LED assignments (active-low)
-   assign LED_R = gpio_led_r;                           // firmware-controlled
-   assign LED_G = cpu_ever_error ? 1'b0 : gpio_led_g;  // error latch
-   assign LED_B = cpu_reset     ? 1'b0 : 1'b1;         // reset indicator
-   assign SPI_MISO = 1'b1;
+   rom rom_inst(.clk(clk), .reset(1'b0),
+      .rd_req(rom_rd_req), .rd_addr(rom_rd_addr[14:0]),
+      .rd_data(rom_rd_data), .data_valid(rom_rd_valid),
+      .wr_req(1'b0), .wr_addr(15'b0), .wr_data(32'b0)
+   );
+
+   // LED:
+   // Blue  : ON while cpu_reset=1 (waiting for timer), OFF after reset release
+   // Red   : controlled by firmware via gpio_mm (gpio_reg[0])
+   // Green : latches ON if cpu_error_instruction ever fires
+   assign LED_B = cpu_reset ? 1'b0 : 1'b1;
+   assign LED_R = gpio_led_r;
+   assign LED_G = cpu_ever_error ? 1'b0 : gpio_led_g;
+
+   reg [31:0] state;
+   parameter IDLE=0, REQ_READ_SPI_STATUS=2, WRITE_MEMORY=6, START_CPU=9, INIT_CPU=10;
+
+   reg [15:0] counter_firmware_address;
+   reg [15:0] firmware_data_buf;
+   reg cpu_read_req_buf;
 
    initial begin
-      cpu_reset    = 1;
-      rst_ctr      = 0;
+      cpu_reset = 1;
+      spi_reset = 0;
+      spi_wr_req = 0; spi_wr_data = 0;
+      spi_firm_ack = 0; spi_cpu_start_ack = 0; spi_cpu_init_ack = 0;
+      state = REQ_READ_SPI_STATUS;
+      gpio_reset = 0;
+      counter_firmware_address = 0;
+      firmware_data_buf = 0;
+      timer = 0;
+      timer_fired = 0;
       cpu_ever_error = 0;
+      cpu_ever_started = 0;
    end
 
-   // ================================================================
-   // Instruction ROM (combinatorial, word-addressed by cpu_read_addr)
-   // ================================================================
-   // Encoding verification:
-   //   lui  a0, 8       : [31:12]=0x00008  [11:7]=01010(a0)  [6:0]=0110111 = 0x00008537
-   //   addi a0, a0, 256 : imm=0x100 rs1=01010 f3=000 rd=01010 op=0010011  = 0x10050513
-   //   addi a1, x0, 1   : imm=0x001 rs1=00000 f3=000 rd=01011 op=0010011  = 0x00100593
-   //   sw   a1, 0(a0)   : imm=0 rs2=01011 rs1=01010 f3=010 imm=0 op=0100011 = 0x00B52023
-   //   jal  x0, 0       : offset=0 rd=00000 op=1101111                      = 0x0000006F
-   reg [31:0] rom_out;
-   always @(*) begin
-      case (cpu_read_addr[4:2])
-         3'h0: rom_out = 32'h00008537; // lui  a0, 8
-         3'h1: rom_out = 32'h10050513; // addi a0, a0, 256  -> a0 = 0x8100
-         3'h2: rom_out = 32'h00100593; // addi a1, x0, 1
-         3'h3: rom_out = 32'h00B52023; // sw   a1, 0(a0)    -> LED_R ON
-         3'h4: rom_out = 32'h0000006F; // jal  x0, 0        -> infinite loop
-         default: rom_out = 32'h00000013; // NOP (addi x0, x0, 0)
-      endcase
-   end
-
-   // ================================================================
-   // Memory bus controller
-   // ================================================================
-   // ROM read latency: 2 cycles after the rising edge of cpu_read_req.
-   // This matches memory.v so the CPU (which waits for data_valid) works unchanged.
-   reg cpu_read_req_buf; // used for rising-edge detection
-   reg rom_rd_pending;   // pipelined: asserted one cycle before data_valid
-
-   always @(posedge clk) begin
-
-      // --- Power-on reset (16 cycles) ---
-      if (rst_ctr != 4'hF) begin
-         rst_ctr   <= rst_ctr + 1;
-         cpu_reset <= 1;
-      end else begin
-         cpu_reset <= 0;
-      end
-
-      // --- Error latch ---
-      if (cpu_error_instruction) cpu_ever_error <= 1;
-
-      // --- Defaults (overridden below if needed) ---
-      cpu_read_data_valid <= 0;
-      rom_rd_pending      <= 0;
-      gpio_wr_req         <= 0;
-      gpio_rd_req         <= 0;
-
-      // --- Rising edge of cpu_read_req -> dispatch to ROM or GPIO ---
+   always @(posedge clk)
+   begin
+      spi_firm_ack <= 0;
+      gpio_wr_req <= 0; gpio_wr_addr <= 0; gpio_wr_data <= 0;
+      cpu_read_data <= 0; cpu_read_data_valid <= 0;
       cpu_read_req_buf <= cpu_read_req;
-      if (cpu_read_req_buf == 0 && cpu_read_req == 1) begin
-         if (cpu_read_addr[31:8] == 24'h000081) begin
-            // GPIO memory-mapped read (0x8100 - 0x81ff)
+      spi_rd_req <= 0; spi_rd_addr <= 0;
+      spi_cpu_start_ack <= 0; spi_cpu_init_ack <= 0;
+      spi_wr_req <= 0; spi_wr_addr <= 0; spi_wr_data <= 0;
+      rom_rd_req <= 0;
+
+      // Error latch
+      if(cpu_error_instruction == 1) cpu_ever_error <= 1;
+
+      // ========== TIMER: auto-release cpu_reset after ~2s ==========
+      if(timer_fired == 0) begin
+         timer <= timer + 1;
+         if(timer == 25'h17FFFFF) begin  // ~2s at 12MHz
+            timer_fired <= 1;
+            cpu_reset <= 0;              // FORCE release reset
+         end
+      end
+      // =============================================================
+
+      // SPI state machine (kept for compatibility; ROM ignores writes)
+      case (state)
+      REQ_READ_SPI_STATUS: begin
+         if(spi_cpu_init == 1) begin
+            spi_cpu_init_ack <= 1;
+            state <= INIT_CPU;
+         end else if(spi_firm_wr == 1) begin
+            spi_firm_ack <= 1;
+            state <= WRITE_MEMORY;
+         end else if (spi_cpu_start == 1) begin
+            spi_cpu_start_ack <= 1;
+            state <= START_CPU;
+         end
+      end
+      WRITE_MEMORY: begin
+         // ROM is read-only; SPI firmware writes are silently discarded.
+         counter_firmware_address <= counter_firmware_address + 1;
+         state <= REQ_READ_SPI_STATUS;
+      end
+      START_CPU: begin
+         cpu_reset <= 0;
+         state <= REQ_READ_SPI_STATUS;
+      end
+      INIT_CPU: begin
+         cpu_reset <= 1;
+         counter_firmware_address <= 0;
+         firmware_data_buf <= 0;
+         state <= REQ_READ_SPI_STATUS;
+      end
+      endcase
+
+      // CPU read request dispatch (identical to top_timer_debug.v / top.v)
+      if(cpu_read_req_buf == 0 && cpu_read_req == 1) begin
+         if(cpu_read_addr[31:15] == 17'h0) begin  // 0x0000 - 0x7fff -> ROM
+            rom_rd_req  <= 1;
+            rom_rd_addr <= cpu_read_addr[14:0];
+         end
+         if(cpu_read_addr[31:8] == 24'h000080) begin  // SPI
+            spi_rd_req  <= 1;
+            spi_rd_addr <= cpu_read_addr[7:0];
+         end
+         if(cpu_read_addr[31:8] == 24'h000081) begin  // GPIO
             gpio_rd_req  <= 1;
             gpio_rd_addr <= cpu_read_addr[7:0];
-         end else begin
-            // ROM read (address 0x0000 - 0x7fff and any other range)
-            rom_rd_pending <= 1;
          end
       end
 
-      // --- ROM: return data on the cycle after rom_rd_pending ---
-      // rom_out is combinatorial from cpu_read_addr, which stays stable
-      // while the CPU is in ID state waiting for data_valid.
-      if (rom_rd_pending) begin
-         cpu_read_data       <= rom_out;
+      if(rom_rd_valid == 1) begin
+         cpu_read_data       <= rom_rd_data;
          cpu_read_data_valid <= 1;
       end
-
-      // --- GPIO read response ---
-      if (gpio_rd_valid) begin
+      if(spi_rd_valid == 1) begin
+         cpu_read_data       <= spi_rd_data;
+         cpu_read_data_valid <= 1;
+      end
+      if(gpio_rd_valid == 1) begin
          cpu_read_data       <= gpio_rd_data;
          cpu_read_data_valid <= 1;
       end
 
-      // --- CPU write dispatch ---
-      if (cpu_write_req) begin
-         if (cpu_write_addr[31:8] == 24'h000081) begin
-            // GPIO memory-mapped write (0x8100 - 0x81ff)
+      // CPU write dispatch (identical to top_timer_debug.v / top.v)
+      if(cpu_write_req == 1) begin
+         if(cpu_write_addr[31:8] == 24'h000080) begin
+            spi_wr_req  <= 1;
+            spi_wr_addr <= cpu_write_addr[7:0];
+            spi_wr_data <= cpu_write_data;
+         end
+         if(cpu_write_addr[31:8] == 24'h000081) begin
             gpio_wr_req  <= 1;
             gpio_wr_addr <= cpu_write_addr[7:0];
             gpio_wr_data <= cpu_write_data;
          end
-         // Writes to ROM addresses are silently ignored
       end
-
    end
 
 endmodule

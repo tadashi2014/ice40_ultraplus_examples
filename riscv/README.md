@@ -92,25 +92,26 @@ If Blue never lights → the timer logic or bitstream is not running.
 
 ### Step 3 — Self-test (CPU full-pipeline check, no SPI required)
 
-A tiny firmware (5 RISC-V instructions) is hard-coded directly in the bitstream.  
+A tiny firmware (5 RISC-V instructions) is hard-coded directly in the bitstream (`rom.v`).  
 No SPI, no host computer, no SPRAM needed.  
-The firmware turns on LED_R by writing to GPIO immediately after power-on.
+The bus controller is identical to Step 2 (only the memory backend changes from SPRAM to ROM).
 
 ```
 make selftest
 make prog_selftest
 ```
 
-**Expected result:** LED_R turns on within milliseconds of programming (almost instantly).
+**Expected result after programming:**
 
-| Observation | Diagnosis |
-|-------------|-----------|
-| 🔴 **Red ON** | CPU fetch, decode, execute, and GPIO write all work ✓. Problem is **only** in the SPI firmware-load path (host_server / spi_mm). |
-| 🟢 **Green ON**, Red OFF | `error_instruction` fired on a ROM instruction — ROM encoding bug (please file an issue). |
-| All LEDs OFF | CPU is not starting at all. |
+| LED sequence | Observation | Diagnosis |
+|-------------|-------------|-----------|
+| Blue ON for 2 s, then 🔴 **Red ON** | ✅ | CPU fetch, decode, execute, and GPIO write all work. Problem is **only** in the SPI firmware-load path. |
+| Blue ON for 2 s, then 🟢 **Green ON** | ❌ | `error_instruction` fired — ROM encoding bug (should not happen). |
+| Blue ON for 2 s, then **all OFF** | ❌ | CPU is not executing from ROM. |
+| Blue never lights | ❌ | Timer or bitstream is not running (check FPGA programming). |
 
-If LED_R lights up, the entire CPU pipeline works.  
-Proceed to debug the SPI / host_server path to fix firmware loading.
+If Red lights after 2 s, the CPU pipeline is fully functional.  
+Proceed to debug the SPI / host_server firmware-load path.
 
 ### Step 4 — Normal production build (SPI firmware load required)
 

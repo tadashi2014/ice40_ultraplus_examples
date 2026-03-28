@@ -57,7 +57,7 @@ prog_blink:
 #   LED_G ON : cpu_error_instruction fired (ROM encoding bug, should not happen).
 #   LED_R OFF + LED_G OFF : CPU is not starting (check power-on reset logic).
 selftest:
-	yosys -p "synth_ice40 -top top -json top_selftest.json" top_selftest.v alu.v register_file.v
+	yosys -p "synth_ice40 -top top -json top_selftest.json" top_selftest.v rom.v alu.v register_file.v
 	nextpnr-ice40 --up5k --json top_selftest.json --pcf $(pcf_file) --asc top_selftest.asc
 	icepack top_selftest.asc top_selftest.bin
 
