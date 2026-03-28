@@ -10,6 +10,8 @@
 #define MATRIX_TOTAL_SIZE (MATRIX_SIDE_SIZE*MATRIX_SIDE_SIZE)
 
 typedef unsigned int uint;
+// Note: size_t is avoided; int is used for loop counters instead.
+// <stddef.h> may not be available with -ffreestanding on all toolchains.
 
 void set_led(int *gpio_addr, int rgb24)
 {
@@ -30,11 +32,11 @@ uint fib(uint n)
 void gradient(int *gpio_addr)
 {
    int grad_speed = 256;
-   for (size_t col = 1; col < 8; col++)
+   for (int col = 1; col < 8; col++)
    {
-      for (size_t i = 0; i < grad_speed; i++)
+      for (int i = 0; i < grad_speed; i++)
       {
-         for (size_t j = 0; j < grad_speed; j++)
+         for (int j = 0; j < grad_speed; j++)
          {
             if(i > j)
             {
@@ -134,7 +136,7 @@ void main()
             if(mat_counter >= (MATRIX_TOTAL_SIZE*2))
             {
                matrix_mult(mat0, mat1, mat_result);
-               for (size_t i = 0; i < MATRIX_TOTAL_SIZE; i++) {
+               for (int i = 0; i < MATRIX_TOTAL_SIZE; i++) {
                   while((*spi_addr & 0x2) != 0){} //read status, write reg free?
                   *(spi_addr+3) = mat_result[i]; //write result
                }

@@ -31,7 +31,10 @@ int main()
    // よって val[0] に色ビット(bit0=R,bit1=G,bit2=B)を入れる
    uint8_t val_led_red[3]    = {0x1, 0x0, 0x0};
    uint8_t val_led_green[3]  = {0x2, 0x0, 0x0};
+   uint8_t val_led_blue[3]   = {0x4, 0x0, 0x0};
    uint8_t val_led_yellow[3] = {0x3, 0x0, 0x0};
+   uint8_t val_led_cyan[3]   = {0x6, 0x0, 0x0};
+   uint8_t val_led_purple[3] = {0x5, 0x0, 0x0};
    uint8_t val_led_white[3]  = {0x7, 0x0, 0x0};
 
    //matrix multiplication
@@ -120,6 +123,18 @@ int main()
    sleep(1);
    spi_send(SPI_SET_LED, val_led_yellow, &spi_status);
    printf("sent yellow color, status: 0x%x\n", spi_status);
+
+   sleep(1);
+   spi_send(SPI_SET_LED, val_led_blue, &spi_status);
+   printf("sent blue color, status: 0x%x\n", spi_status);
+
+   sleep(1);
+   spi_send(SPI_SET_LED, val_led_purple, &spi_status);
+   printf("sent purple color, status: 0x%x\n", spi_status);
+
+   sleep(1);
+   spi_send(SPI_SET_LED, val_led_cyan, &spi_status);
+   printf("sent cyan color, status: 0x%x\n", spi_status);
 
    sleep(1);
    spi_send(SPI_SET_LED, val_led_white, &spi_status);
