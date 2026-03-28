@@ -70,23 +70,23 @@ LED colours show CPU health:
 | LED | Meaning |
 |-----|---------|
 | 🔵 Blue ON (first ~2 s) | FPGA running, CPU in reset |
-| 🔵 Blue OFF → 🟢 Green ON | CPU started, fetched 0x00000000 (invalid opcode) → `error_instruction` |
-| 🔵 Blue OFF, all LEDs OFF | CPU started and is executing (no error, no GPIO write yet) |
-| 🔴 Red ON | Firmware set gpio_mm bit0 (LED working end-to-end) |
+| 🔵 Blue OFF → 🟢 Green ON | Timer fired, cpu_reset released — FPGA clock/timer/LED all working |
+| 🔵 Blue ON, no Green | Timer not firing — check bitstream or clock |
 
 ```
 make debug
 make prog_debug
 ```
 
-With empty SPRAM (no firmware loaded), the expected sequence is:
+The expected sequence is:
 
 1. **0 – 2 s:** Blue ON  
-2. **After 2 s:** Blue OFF, Green ON (0x00000000 is an illegal opcode → error)
+2. **After 2 s:** Blue OFF, **Green ON** (timer fired → cpu_reset released → Green latches on permanently)
 
-**"Blue OFF → Green ON" (after ~2 s) means the CPU core and GPIO module work correctly.**  
-The problem is that SPRAM starts empty, so there is no firmware for the CPU to run.  
-→ Proceed to Step 3 to confirm the CPU can run real instructions.
+**"Blue OFF → Green ON (stays green)" means the FPGA clock, timer circuit, and LED path all work.**  
+SPRAM starts with undefined contents, so the CPU may or may not generate an error —  
+Green is driven directly by `timer_fired` for a reliable, deterministic indication.  
+→ Proceed to Step 3 to confirm the CPU can run real instructions from ROM.
 
 If Blue never lights → the timer logic or bitstream is not running.
 

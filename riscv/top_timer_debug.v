@@ -1,13 +1,13 @@
 // Timer debug version:
 // - Automatically releases cpu_reset after ~2 seconds (no SPI needed)
-// - Firmware must be pre-loaded OR memory starts at 0 (NOP loop)
 // - LED_B: ON while cpu_reset=1 (waiting), OFF when cpu_reset=0
 // - LED_R: follows gpio_mm bit0 (set by firmware sw to 0x8100)
-// - LED_G: latches ON if cpu_error_instruction ever fires
+// - LED_G: latches ON when timer fires (cpu_reset released); stays ON permanently
+//          SPRAM has undefined contents on power-up, so error_instruction is not
+//          a reliable trigger — timer_fired gives a deterministic Blue→Green transition.
 //
-// This bypasses the entire SPI->cpu_start path to isolate the problem.
-// If LED_R lights after ~2s: CPU + GPIO works, problem is in SPI path.
-// If LED_R never lights: CPU or GPIO or firmware has a problem.
+// Expected: Blue (~2s) → Green ON and stays on.
+// This confirms the FPGA clock, timer circuit, and LED path all work.
 
 `include "gpio_mm.v"
 `include "memory.v"
@@ -104,10 +104,11 @@ module top(input [3:0] SW, input clk,
    // LED:
    // 青: cpu_reset=1(まだリセット中) -> 点灯, cpu_reset=0 -> 消灯
    // 赤: gpio_mm の LED_R (firmware が制御)
-   // 緑: cpu_error_instruction が一度でも起きたら点灯
+   // 緑: タイマー発火後(cpu_reset解除後)に点灯、そのまま維持
+   //     (SPRAM は不定値のため error_instruction 頼みでは不確実)
    assign LED_B = cpu_reset ? 1'b0 : 1'b1;   // リセット中=青点灯
    assign LED_R = gpio_led_r;                  // firmware 制御
-   assign LED_G = cpu_ever_error ? 1'b0 : gpio_led_g; // error発生で緑点灯
+   assign LED_G = timer_fired ? 1'b0 : gpio_led_g; // タイマー発火で緑点灯、そのまま
 
    reg [31:0] state;
    parameter IDLE=0, REQ_READ_SPI_STATUS=2, WRITE_MEMORY=6, START_CPU=9, INIT_CPU=10;
