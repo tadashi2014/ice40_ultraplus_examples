@@ -130,10 +130,11 @@ cd host_server && make && ./host
 
 | LED sequence | Observation | Diagnosis |
 |-------------|-------------|-----------|
-| 🔵 Blue ON, stays on | ❌ | host never sent `SPI_START_CPU`. Check USB/FTDI connection and `./host` output. |
-| 🔵 Blue OFF → 🔴 **Red ON** | ✅ | Full SPI path works. SPI firmware load + CPU execute + GPIO write all work. Proceed to Step 5. |
-| 🔵 Blue OFF → 🟢 **Green ON** | ❌ | `cpu_error_instruction` fired — firmware compiled or loaded incorrectly. Check `firmware/main` binary and SPI bit-error rate. |
-| 🔵 Blue OFF, all LEDs OFF | ❌ | CPU started but firmware not writing to GPIO. Check firmware build. |
+| 🔵 Blue ON, stays on | ❌ | host never sent `SPI_START_CPU`. Check USB/FTDI and `./host` output. |
+| 🔵 Blue OFF + 🔴 Red ON + Green OFF | ✅ | Firmware loaded and CPU running without errors. Proceed to Step 5. |
+| 🔵 Blue OFF + 🔴 Red ON + 🟢 Green ON | ❌ | Firmware **was** written to SPRAM but CPU got bad opcode. Check binary content (see `./host` output: first bytes should be `0x37 0x41 0x00 0x00`). |
+| 🔵 Blue OFF + Red OFF + 🟢 Green ON | ❌ | Firmware was **never** written to SPRAM. `SPI_SEND_FIRMWARE` packets failed entirely. Check `./host` for "too many retries". |
+| 🔵 Blue OFF, all LEDs OFF | ❌ | CPU started but no firmware loaded or firmware not executing. Check `./host` output. |
 
 LED meaning (active-low: signal 0 = ON, signal 1 = OFF):
 
@@ -141,8 +142,9 @@ LED meaning (active-low: signal 0 = ON, signal 1 = OFF):
 |-----|---------|
 | 🔵 Blue ON | `cpu_reset=1` — SPI_START_CPU not yet received |
 | 🔵 Blue OFF | CPU has been released from reset |
-| 🔴 Red ON | Firmware wrote 1 to GPIO bit0 (gpio_mm address 0x8100) |
-| 🟢 Green ON | `cpu_error_instruction` latched — bad opcode |
+| 🔴 Red ON | At least one 32-bit word has been written to SPRAM (firmware loaded) |
+| 🔴 Red OFF | No firmware was written to SPRAM |
+| 🟢 Green ON | `cpu_error_instruction` latched — bad or missing opcode at address 0 |
 
 ### Step 5 — Normal production build (SPI firmware load required)
 

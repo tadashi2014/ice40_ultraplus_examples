@@ -48,31 +48,58 @@ int main()
    if(file == NULL)
    {
       printf("error opening the file ./firmware/main\n");
+      printf("hint: run 'make' inside host_server/firmware/ to compile the firmware\n");
       exit(1);
    }
    int firmware_read_size = fread(buffer_read, sizeof(uint8_t), NB_ELEM_READ, file);
+   fclose(file);
+
+   if(firmware_read_size == 0)
+   {
+      printf("error: firmware file is empty (0 bytes).\n");
+      printf("hint: run 'make' inside host_server/firmware/ to compile the firmware\n");
+      exit(1);
+   }
+
+   printf("size firmware: %d bytes\n", firmware_read_size);
+   printf("firmware[0..3]: 0x%02x 0x%02x 0x%02x 0x%02x  (expected for default start.S: 0x37 0x41 0x00 0x00 = lui sp,0x4)\n",
+      firmware_read_size > 0 ? buffer_read[0] : 0,
+      firmware_read_size > 1 ? buffer_read[1] : 0,
+      firmware_read_size > 2 ? buffer_read[2] : 0,
+      firmware_read_size > 3 ? buffer_read[3] : 0);
 
    spi_send(SPI_INIT, no_param, NULL); // init
-
-   printf("sent\n");
-
-   printf("size firmware: %d\n", firmware_read_size);
+   printf("sent SPI_INIT\n");
 
    //sends the riscv firmware to the fpga
+   int load_failures = 0;
    for (size_t i = 0; i < firmware_read_size; i+=2)
    {
-      uint8_t array_send[3] = {buffer_read[i], buffer_read[i+1], 0x0};
+      uint8_t b0 = buffer_read[i];
+      uint8_t b1 = (i + 1 < (size_t)firmware_read_size) ? buffer_read[i+1] : 0x00;
+      uint8_t array_send[3] = {b0, b1, 0x0};
       usleep(1000);
       printf("sending %lu of %d\n", i, firmware_read_size);
       int result = spi_send(SPI_SEND_FIRMWARE, array_send, &spi_status);
       if(result != 0)
       {
-         printf("too many retries\n");
+         load_failures++;
+         printf("too many retries at offset %lu (b0=0x%02x b1=0x%02x)\n", i, b0, b1);
       }
       else
       {
          printf("done\n");
       }
+   }
+
+   if(load_failures > 0)
+   {
+      printf("WARNING: %d firmware packet(s) failed — firmware may be incomplete!\n", load_failures);
+      printf("         spi_debug LED_G will light even if the SPI layer works.\n");
+   }
+   else
+   {
+      printf("all %d firmware packets sent successfully\n", (firmware_read_size + 1) / 2);
    }
 
    sleep(2);

@@ -83,6 +83,7 @@ module top(input [3:0] SW, input clk,
 
    // Debug latches
    reg cpu_ever_error;
+   reg firmware_loaded;   // latches after the first 32-bit word is written to SPRAM
 
    wire gpio_led_r, gpio_led_g, gpio_led_b;
 
@@ -114,11 +115,16 @@ module top(input [3:0] SW, input clk,
 
    // LED (active-low: signal 0 = ON, signal 1 = OFF):
    //   Blue  : ON while cpu_reset=1 (SPI START_CPU not yet received)
-   //   Red   : firmware controlled via gpio_mm
+   //   Red   : ON once any firmware word has been written to SPRAM
    //   Green : latches ON if cpu_error_instruction ever fires
+   //
+   // Diagnosis when Blue goes OFF (CPU started):
+   //   Red ON , Green OFF → CPU running with firmware ✓ (proceed to production build)
+   //   Red ON , Green ON  → firmware WAS written but has bad opcode → check binary/byte order
+   //   Red OFF, Green ON  → firmware was NEVER written → SPI_SEND_FIRMWARE failed entirely
    assign LED_B = cpu_reset ? 1'b0 : 1'b1;
-   assign LED_R = gpio_led_r;
-   assign LED_G = cpu_ever_error ? 1'b0 : gpio_led_g;
+   assign LED_R = firmware_loaded ? 1'b0 : 1'b1;
+   assign LED_G = cpu_ever_error ? 1'b0 : 1'b1;
 
    reg [31:0] state;
    parameter IDLE=0, REQ_READ_SPI_STATUS=2, WRITE_MEMORY=6, START_CPU=9, INIT_CPU=10;
@@ -140,6 +146,7 @@ module top(input [3:0] SW, input clk,
       counter_firmware_address = 0;
       firmware_data_buf = 0;
       cpu_ever_error = 0;
+      firmware_loaded = 0;
    end
 
    always @(posedge clk)
@@ -178,6 +185,7 @@ module top(input [3:0] SW, input clk,
             memory_wr_data <= {spi_firm_data[15:0], firmware_data_buf};
             memory_wr_req <= 1;
             memory_wr_addr <= {counter_firmware_address[13:1], 2'b00};
+            firmware_loaded <= 1;   // at least one 32-bit word has been written
          end
          counter_firmware_address <= counter_firmware_address + 1;
          state <= REQ_READ_SPI_STATUS;
@@ -190,6 +198,7 @@ module top(input [3:0] SW, input clk,
          cpu_reset <= 1;
          counter_firmware_address <= 0;
          firmware_data_buf <= 0;
+         firmware_loaded <= 0;   // reset firmware indicator on re-init
          state <= REQ_READ_SPI_STATUS;
       end
       endcase
