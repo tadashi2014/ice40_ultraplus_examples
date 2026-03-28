@@ -39,6 +39,68 @@ All these operations would normally be optimized by being implemented in fpga an
 +----------------------------------+                +-------------------------+
 ```
 
+## Debugging (LEDが消灯のまま / LED stays off)
+
+LEDs are **active-low** (signal 0 = ON, signal 1 = OFF).  
+With the default `top.v`, the CPU only starts after SPI sends a "start" command, so  
+LEDs stay off until firmware runs.  Use the step-by-step debug builds below.
+
+### Step 1 — Blink test (FPGA programming check)
+
+Verifies that the FPGA is being programmed and the clock/LED pins work.  
+No CPU, no SPI, no firmware required.
+
+```
+make blink
+make prog_blink
+```
+
+**Expected result:** All 3 LEDs blink independently at different rates (~0.35 / 0.70 / 1.40 s).
+
+| Observation | Diagnosis |
+|-------------|-----------|
+| LEDs blink as expected | FPGA programming OK → go to Step 2 |
+| LEDs do NOT blink | Check USB/FTDI connection, `iceprog` version, and board power |
+
+### Step 2 — Timer debug build (CPU execution check)
+
+Automatically releases `cpu_reset` after ~2 s without SPI.  
+LED colours show CPU health:
+
+| LED | Meaning |
+|-----|---------|
+| 🔵 Blue ON (first ~2 s) | FPGA running, CPU in reset |
+| 🔵 Blue OFF → 🟢 Green ON | CPU started, fetched 0x00000000 (invalid opcode) → `error_instruction` |
+| 🔵 Blue OFF, all LEDs OFF | CPU started and is executing (no error, no GPIO write yet) |
+| 🔴 Red ON | Firmware set gpio_mm bit0 (LED working end-to-end) |
+
+```
+make debug
+make prog_debug
+```
+
+With empty SPRAM (no firmware loaded), the expected sequence is:
+
+1. **0 – 2 s:** Blue ON  
+2. **After 2 s:** Blue OFF, Green ON (0x00000000 is an illegal opcode → error)
+
+If you see this pattern → CPU core and GPIO module work; you only need firmware.  
+If Blue never lights → the timer logic or bitstream is not running.
+
+### Step 3 — Normal production build (SPI firmware load required)
+
+Load firmware via the host server, then the CPU starts:
+
+```
+make build
+make prog
+
+cd host_server/firmware && make
+cd host_server && make && ./host
+```
+
+---
+
 ## How to build
 
 There are the following subsystems to compile:
