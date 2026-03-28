@@ -75,10 +75,9 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       .wr_req(gpio_wr_req), .wr_addr(gpio_wr_addr), .wr_data(gpio_wr_data)
    );
 
-   // オリジナルと同じく [31:0] のままポートに渡す（yosys 最適化対策）
    memory memory_inst(.clk(clk), .reset(memory_reset),
-      .rd_req(memory_rd_req), .rd_addr(memory_rd_addr), .rd_data(memory_rd_data), .data_valid(memory_rd_valid),
-      .wr_req(memory_wr_req), .wr_addr(memory_wr_addr), .wr_data(memory_wr_data)
+      .rd_req(memory_rd_req), .rd_addr(memory_rd_addr[14:0]), .rd_data(memory_rd_data), .data_valid(memory_rd_valid),
+      .wr_req(memory_wr_req), .wr_addr(memory_wr_addr[14:0]), .wr_data(memory_wr_data)
    );
 
    //register file investigation
