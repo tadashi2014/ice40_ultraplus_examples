@@ -5,11 +5,11 @@
    0xC write data
 
    opcodes
-   0x0     | Nop, does nothing (used to read)
-   0x1     | init the spi slave module (should not be seen here, consumed by the spi slave)
-   0x2     | Sends 16bits of data (incremental address) ==> will be britten to ram
-   0x3     | Starts the cpu, send signal
-   above   | will be put in a register for the cpu to read via the read bus
+   0x0     | Nop
+   0x1     | init (consumed by spi_slave, also forwarded to spi_mm for cpu_init)
+   0x2     | Sends 16bits of data (incremental address) => write to ram
+   0x3     | Starts the cpu (deassert reset)
+   above   | put in register for CPU to read
 
    //byte2 | byte1 | byte0 | opcode/status
 */
@@ -21,10 +21,9 @@ module spi_mm(input wire clk, input wire reset,
       input wire wr_req, input wire [31:0] wr_addr, input wire [31:0] wr_data,
       output reg firm_wr, output reg [15:0] firm_data, input wire firm_ack,
       output reg cpu_start, input wire cpu_start_ack,
-      output reg cpu_init, input wire cpu_init_ack   // INIT受信時にtop.vへ通知
+      output reg cpu_init, input wire cpu_init_ack
    );
 
-   //dedicated spi signals
    wire wr_buffer_free;
    reg wr_en;
    reg [23:0] spi_module_wr_data;
@@ -38,24 +37,19 @@ module spi_mm(input wire clk, input wire reset,
       .rd_data_available(rd_data_available), .rd_ack(rd_ack), .rd_data(spi_module_rd_data)
    );
 
-   //internal signals and registers
    reg[31:0] status_register;
    reg[31:0] read_data_register;
    reg[31:0] assert_read_register;
    reg[31:0] write_data_register;
 
-   reg spi_started;
-
    initial begin
       wr_en = 0;
       spi_module_wr_data = 0;
       rd_ack = 0;
-
       status_register = 0;
       read_data_register = 0;
       assert_read_register = 0;
       write_data_register = 0;
-
       firm_wr = 0;
       firm_data = 0;
       cpu_start = 0;
@@ -70,14 +64,13 @@ module spi_mm(input wire clk, input wire reset,
          rd_ack <= 0;
          cpu_start <= 0;
          cpu_init <= 0;
-
          status_register <= 32'h0;
          read_data_register <= 0;
          assert_read_register <= 0;
          write_data_register <= 0;
       end else begin
 
-         //default
+         //defaults
          rd_ack <= 0;
          rd_data <= 0;
          data_valid <= 0;
@@ -87,40 +80,37 @@ module spi_mm(input wire clk, input wire reset,
          status_register[2] <= 1;
 
          if(rd_data_available == 1 && status_register[0] == 0) begin
-            if(spi_module_rd_data[7:0] == 8'h0) begin //NOP, does nothing, is not taken into accounts
+            if(spi_module_rd_data[7:0] == 8'h0) begin //NOP
                rd_ack <= 1;
-            end else if(spi_module_rd_data[7:0] == 8'h1) begin //INIT: reset firmware address counter
-               // BUG FIX: cpu_init が既に 1 の場合も rd_ack を出してスタックを防ぐ。
-               // 修正前: cpu_init==1 のときは rd_ack が出ず spi_slave の
-               // rd_data_available がクリアされないため、以降のコマンドが全てブロック
-               // されてしまっていた。cpu_init のクリアは top.v の cpu_init_ack に
-               // 任せるのでここでは常に rd_ack を出す。
+            end else if(spi_module_rd_data[7:0] == 8'h1) begin //INIT
+               // cpu_init は top.v の cpu_init_ack でクリアされる。
+               // ここでは常に rd_ack を返して spi_slave をブロックしない。
                cpu_init <= 1;
-               rd_ack <= 1; // FIX: cpu_init==1 でも必ず rd_ack を返す
-            end else if(spi_module_rd_data[7:0] == 8'h2) begin //something needs to be written in memory
-               // BUG FIX: firm_wr が既に 1 の場合も rd_ack を出す。
-               // 修正前: firm_wr==1 のときは rd_ack が出ずブロックしていた。
-               // firm_wr のクリアは top.v の firm_ack に任せる。
+               rd_ack <= 1;
+            end else if(spi_module_rd_data[7:0] == 8'h2) begin //SEND FIRMWARE
+               // FIX: firm_wr==0 のときのみ firm_data を更新する。
+               // firm_wr==1 (top.v がまだ WRITE_MEMORY 処理中) のときに
+               // firm_data を上書きするとメモリに間違ったデータが書かれる。
+               // firm_wr==1 でも rd_ack は返す (spi_slave をブロックしない)。
+               if(firm_wr == 0) begin
+                  firm_data <= spi_module_rd_data[23:8];
+               end
                firm_wr <= 1;
-               rd_ack <= 1; // FIX: firm_wr==1 でも必ず rd_ack を返す
-               firm_data <= spi_module_rd_data[23:8];
-            end else if (spi_module_rd_data[7:0] == 8'h3) begin
-               // BUG FIX: cpu_start が既に 1 の場合も rd_ack を出す。
+               rd_ack <= 1;
+            end else if (spi_module_rd_data[7:0] == 8'h3) begin //START CPU
                cpu_start <= 1;
-               rd_ack <= 1; // FIX: cpu_start==1 でも必ず rd_ack を返す
-            end else begin
+               rd_ack <= 1;
+            end else begin //opcode >= 0x4: CPU コマンド
                read_data_register <= spi_module_rd_data;
-               rd_ack <= 1; //tells spi module that we have read the value
+               rd_ack <= 1;
                status_register[0] <= 1;
             end
          end
 
-         //reset the cpu_start signal
          if(cpu_start_ack == 1 && cpu_start == 1) begin
             cpu_start <= 0;
          end
 
-         //reset the cpu_init signal
          if(cpu_init_ack == 1 && cpu_init == 1) begin
             cpu_init <= 0;
          end
@@ -146,9 +136,9 @@ module spi_mm(input wire clk, input wire reset,
          end
 
          if(wr_req == 1) begin
-            if(wr_addr == 32'h8) begin //assert read
+            if(wr_addr == 32'h8) begin //assert read: CPU がデータを読んだ
                status_register[0] <= 0;
-            end else if(wr_addr == 32'hC) begin
+            end else if(wr_addr == 32'hC) begin //write data: CPU から host へ送信
                write_data_register <= wr_data;
                wr_en <= 1;
                spi_module_wr_data <= wr_data;
