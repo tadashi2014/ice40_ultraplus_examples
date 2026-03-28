@@ -43,6 +43,21 @@ blink:
 prog_blink:
 	iceprog -S top_blink.bin
 
+# ---- SPI debug build: SPI required to start CPU; LED_B=waiting, LED_G=error, LED_R=firmware ----
+# Step 4 in the debug progression.  Load firmware with host_server/./host.
+# LED behaviour (active-low: 0=ON, 1=OFF):
+#   LED_B ON  : cpu_reset=1 (SPI START_CPU not yet received)
+#   LED_B OFF + LED_R ON  : SPI firmware loaded and CPU running  ✓
+#   LED_B OFF + LED_G ON  : CPU started but cpu_error_instruction fired (bad firmware) ✗
+#   LED_B stays ON        : host never sent SPI_START_CPU (SPI path problem) ✗
+spi_debug:
+	yosys -p "synth_ice40 -top top -json top_spi_debug.json -blif top_spi_debug.blif" top_spi_debug.v alu.v register_file.v
+	nextpnr-ice40 --up5k --json top_spi_debug.json --pcf $(pcf_file) --asc top_spi_debug.asc
+	icepack top_spi_debug.asc top_spi_debug.bin
+
+prog_spi_debug:
+	iceprog -S top_spi_debug.bin
+
 # ---- Self-test build: 5-instruction ROM embedded in bitstream, no SPI needed ----
 # Firmware (embedded ROM):
 #   lui  a0, 8       ; a0 = 0x8000
@@ -68,4 +83,5 @@ clean:
 	rm -rf $(filename).json $(filename).blif $(filename).asc $(filename).bin \
 	       top_timer_debug.json top_timer_debug.blif top_timer_debug.asc top_timer_debug.bin \
 	       top_blink.json top_blink.asc top_blink.bin \
-	       top_selftest.json top_selftest.blif top_selftest.asc top_selftest.bin
+	       top_selftest.json top_selftest.blif top_selftest.asc top_selftest.bin \
+	       top_spi_debug.json top_spi_debug.blif top_spi_debug.asc top_spi_debug.bin

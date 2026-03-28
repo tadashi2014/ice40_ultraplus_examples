@@ -113,7 +113,38 @@ make prog_selftest
 If Red lights after 2 s, the CPU pipeline is fully functional.  
 Proceed to debug the SPI / host_server firmware-load path.
 
-### Step 4 — Normal production build (SPI firmware load required)
+### Step 4 — SPI debug build (SPI firmware-load check)
+
+Same hardware as the production build, but LEDs show the SPI and CPU status so you can
+isolate exactly where the SPI path fails.
+
+```
+make spi_debug
+make prog_spi_debug
+
+cd host_server/firmware && make
+cd host_server && make && ./host
+```
+
+**Expected result:**
+
+| LED sequence | Observation | Diagnosis |
+|-------------|-------------|-----------|
+| 🔵 Blue ON, stays on | ❌ | host never sent `SPI_START_CPU`. Check USB/FTDI connection and `./host` output. |
+| 🔵 Blue OFF → 🔴 **Red ON** | ✅ | Full SPI path works. SPI firmware load + CPU execute + GPIO write all work. Proceed to Step 5. |
+| 🔵 Blue OFF → 🟢 **Green ON** | ❌ | `cpu_error_instruction` fired — firmware compiled or loaded incorrectly. Check `firmware/main` binary and SPI bit-error rate. |
+| 🔵 Blue OFF, all LEDs OFF | ❌ | CPU started but firmware not writing to GPIO. Check firmware build. |
+
+LED meaning (active-low: signal 0 = ON, signal 1 = OFF):
+
+| LED | Meaning |
+|-----|---------|
+| 🔵 Blue ON | `cpu_reset=1` — SPI_START_CPU not yet received |
+| 🔵 Blue OFF | CPU has been released from reset |
+| 🔴 Red ON | Firmware wrote 1 to GPIO bit0 (gpio_mm address 0x8100) |
+| 🟢 Green ON | `cpu_error_instruction` latched — bad opcode |
+
+### Step 5 — Normal production build (SPI firmware load required)
 
 Load firmware via the host server, then the CPU starts:
 
