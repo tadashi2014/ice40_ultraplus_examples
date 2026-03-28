@@ -84,10 +84,35 @@ With empty SPRAM (no firmware loaded), the expected sequence is:
 1. **0 – 2 s:** Blue ON  
 2. **After 2 s:** Blue OFF, Green ON (0x00000000 is an illegal opcode → error)
 
-If you see this pattern → CPU core and GPIO module work; you only need firmware.  
+**"Blue OFF → Green ON" (after ~2 s) means the CPU core and GPIO module work correctly.**  
+The problem is that SPRAM starts empty, so there is no firmware for the CPU to run.  
+→ Proceed to Step 3 to confirm the CPU can run real instructions.
+
 If Blue never lights → the timer logic or bitstream is not running.
 
-### Step 3 — Normal production build (SPI firmware load required)
+### Step 3 — Self-test (CPU full-pipeline check, no SPI required)
+
+A tiny firmware (5 RISC-V instructions) is hard-coded directly in the bitstream.  
+No SPI, no host computer, no SPRAM needed.  
+The firmware turns on LED_R by writing to GPIO immediately after power-on.
+
+```
+make selftest
+make prog_selftest
+```
+
+**Expected result:** LED_R turns on within milliseconds of programming (almost instantly).
+
+| Observation | Diagnosis |
+|-------------|-----------|
+| 🔴 **Red ON** | CPU fetch, decode, execute, and GPIO write all work ✓. Problem is **only** in the SPI firmware-load path (host_server / spi_mm). |
+| 🟢 **Green ON**, Red OFF | `error_instruction` fired on a ROM instruction — ROM encoding bug (please file an issue). |
+| All LEDs OFF | CPU is not starting at all. |
+
+If LED_R lights up, the entire CPU pipeline works.  
+Proceed to debug the SPI / host_server path to fix firmware loading.
+
+### Step 4 — Normal production build (SPI firmware load required)
 
 Load firmware via the host server, then the CPU starts:
 

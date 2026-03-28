@@ -43,7 +43,29 @@ blink:
 prog_blink:
 	iceprog -S top_blink.bin
 
+# ---- Self-test build: 5-instruction ROM embedded in bitstream, no SPI needed ----
+# Firmware (embedded ROM):
+#   lui  a0, 8       ; a0 = 0x8000
+#   addi a0, a0, 256 ; a0 = 0x8100  (GPIO address)
+#   addi a1, x0, 1   ; a1 = 1
+#   sw   a1, 0(a0)   ; GPIO[0]=1  -> LED_R ON
+#   jal  x0, 0       ; infinite loop
+#
+# Expected result within a few microseconds of programming:
+#   LED_R ON : CPU fetch/decode/execute and GPIO write all work.
+#              The problem is ONLY in the SPI firmware-load path.
+#   LED_G ON : cpu_error_instruction fired (ROM encoding bug, should not happen).
+#   LED_R OFF + LED_G OFF : CPU is not starting (check power-on reset logic).
+selftest:
+	yosys -p "synth_ice40 -top top -json top_selftest.json" top_selftest.v alu.v register_file.v
+	nextpnr-ice40 --up5k --json top_selftest.json --pcf $(pcf_file) --asc top_selftest.asc
+	icepack top_selftest.asc top_selftest.bin
+
+prog_selftest:
+	iceprog -S top_selftest.bin
+
 clean:
 	rm -rf $(filename).json $(filename).blif $(filename).asc $(filename).bin \
 	       top_timer_debug.json top_timer_debug.blif top_timer_debug.asc top_timer_debug.bin \
-	       top_blink.json top_blink.asc top_blink.bin
+	       top_blink.json top_blink.asc top_blink.bin \
+	       top_selftest.json top_selftest.blif top_selftest.asc top_selftest.bin
