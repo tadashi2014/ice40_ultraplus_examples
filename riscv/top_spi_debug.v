@@ -114,18 +114,17 @@ module top(input [3:0] SW, input clk,
    );
 
    // LED (active-low: signal 0 = ON, signal 1 = OFF):
-   //   Blue  : ON while cpu_reset=1 (SPI START_CPU not yet received)
-   //   Red   : ON once any firmware word has been written to SPRAM
-   //   Green : latches ON if cpu_error_instruction ever fires
+   //   Blue   : ON while cpu_reset=1 (no START_CPU yet)
+   //   Red    : ON once firmware has been written to SPRAM (firmware_loaded=1)
+   //   Green  : ON when CPU is running with firmware loaded (cpu_reset=0 && firmware_loaded=1)
    //
-   // Diagnosis when Blue goes OFF (CPU started):
-   //   Red ON , Green OFF → CPU running with firmware ✓ (proceed to production build)
-   //   Red ON , Green ON  → firmware WAS written but has bad opcode
-   //                         → rebuild firmware, check disassembly for unrecognized opcodes
-   //   Red OFF, Green ON  → firmware was NEVER written → SPI_SEND_FIRMWARE failed entirely
+   // Sequence: Blue → Purple(R+B) → Yellow(R+G)
+   //   Blue         : bitstream written, waiting for firmware
+   //   Purple (R+B) : firmware loaded, CPU not yet started
+   //   Yellow (R+G) : CPU started and running
    assign LED_B = cpu_reset ? 1'b0 : 1'b1;
    assign LED_R = firmware_loaded ? 1'b0 : 1'b1;
-   assign LED_G = cpu_ever_error ? 1'b0 : 1'b1;
+   assign LED_G = (!cpu_reset && firmware_loaded) ? 1'b0 : 1'b1;
 
    reg [31:0] state;
    parameter IDLE=0, REQ_READ_SPI_STATUS=2, WRITE_MEMORY=6, START_CPU=9, INIT_CPU=10;

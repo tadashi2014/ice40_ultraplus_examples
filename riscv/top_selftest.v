@@ -118,12 +118,12 @@ module top(input [3:0] SW, input clk,
    );
 
    // LED:
-   // Blue  : ON while cpu_reset=1 (waiting for timer), OFF after reset release
+   // Blue  : ON while cpu_reset=1 (waiting for timer ~2s), OFF after reset release
    // Red   : controlled by firmware via gpio_mm (gpio_reg[0])
-   // Green : latches ON if cpu_error_instruction ever fires
+   // Green : turns ON when timer fires (~2s) -> Blue→Green confirms timer/clock work
    assign LED_B = cpu_reset ? 1'b0 : 1'b1;
    assign LED_R = gpio_led_r;
-   assign LED_G = cpu_ever_error ? 1'b0 : gpio_led_g;
+   assign LED_G = timer_fired ? 1'b0 : gpio_led_g;
 
    reg [31:0] state;
    parameter IDLE=0, REQ_READ_SPI_STATUS=2, WRITE_MEMORY=6, START_CPU=9, INIT_CPU=10;
