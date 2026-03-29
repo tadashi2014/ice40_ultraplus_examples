@@ -484,7 +484,7 @@ begin : main
             src = {27'b0, instruction_sav[19:15]};
          end
 
-         //juste have a few CSR registers, to pass compliance tests
+         //just have a few CSR registers, to pass compliance tests
          if(instruction_sav[31:20] == 12'h340) begin //mscratch
             csr_idx = mscratch;
          end else if (instruction_sav[31:20] == 12'h305) begin //mtvec
