@@ -200,6 +200,13 @@ module top(input [3:0] SW, input clk,
          counter_firmware_address <= 0;
          firmware_data_buf <= 0;
          firmware_loaded <= 0;   // reset firmware indicator on re-init
+         // FIX: 残留 firm_wr を確実にクリアする。
+         // 電源投入直後やノイズで firm_wr が 1 になっていた場合、
+         // spi_firm_ack を出してクリアしないと INIT 後の最初の
+         // WRITE_MEMORY が偽パケットを処理し counter が 1 にずれる。
+         // counter がずれると全ての firmware バイトが誤アドレスに書かれ
+         // CPU が不正命令を踏む原因になる。
+         spi_firm_ack <= 1;
          state <= REQ_READ_SPI_STATUS;
       end
       endcase

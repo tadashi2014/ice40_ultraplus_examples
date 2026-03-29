@@ -194,6 +194,12 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
          cpu_reset <= 1;
          counter_firmware_address <= 0;
          firmware_data_buf <= 0;
+         // FIX: 残留 firm_wr を確実にクリアする。
+         // 電源投入直後やノイズで firm_wr が 1 になっていた場合、
+         // INIT 後の最初の WRITE_MEMORY が偽パケットを処理し
+         // counter が 1 にずれてしまう。spi_firm_ack を出して
+         // firm_wr を確実に 0 に戻す。
+         spi_firm_ack <= 1;
          state <= REQ_READ_SPI_STATUS;
       end
 
