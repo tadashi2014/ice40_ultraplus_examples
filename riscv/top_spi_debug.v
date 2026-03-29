@@ -116,15 +116,16 @@ module top(input [3:0] SW, input clk,
    // LED (active-low: signal 0 = ON, signal 1 = OFF):
    //   Blue   : ON while cpu_reset=1 (no START_CPU yet)
    //   Red    : ON once firmware has been written to SPRAM (firmware_loaded=1)
-   //   Green  : ON when CPU is running with firmware loaded (cpu_reset=0 && firmware_loaded=1)
+   //   Green  : ON if cpu_error_instruction ever fired (bad opcode from SPRAM)
    //
-   // Sequence: Blue → Purple(R+B) → Yellow(R+G)
-   //   Blue         : bitstream written, waiting for firmware
+   // Sequence after host/./host:
+   //   Blue         : waiting for firmware / START_CPU
    //   Purple (R+B) : firmware loaded, CPU not yet started
-   //   Yellow (R+G) : CPU started and running
+   //   Red only     : CPU running correctly  ✓
+   //   Yellow (R+G) : CPU started but hit illegal opcode (SPRAM load problem) ✗
    assign LED_B = cpu_reset ? 1'b0 : 1'b1;
    assign LED_R = firmware_loaded ? 1'b0 : 1'b1;
-   assign LED_G = (!cpu_reset && firmware_loaded) ? 1'b0 : 1'b1;
+   assign LED_G = cpu_ever_error ? 1'b0 : 1'b1;
 
    reg [31:0] state;
    parameter IDLE=0, REQ_READ_SPI_STATUS=2, WRITE_MEMORY=6, START_CPU=9, INIT_CPU=10;
