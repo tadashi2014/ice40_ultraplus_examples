@@ -4,27 +4,27 @@
 module spi_slave(input wire clk, input wire reset,
       input wire SPI_SCK, input wire SPI_SS, input wire SPI_MOSI, output wire SPI_MISO,
       output wire wr_buffer_free, input wire wr_en, input wire [23:0] wr_data,
-      output reg rd_data_available, input wire rd_ack, output reg [31:0] rd_data
+      output reg rd_data_available = 0, input wire rd_ack, output reg [31:0] rd_data
    );
 
-   reg [4:0] counter_read; //max 32
+   reg [4:0] counter_read = 0; //max 32
 
-   reg [1:0] spi_clk_reg;
-   reg [1:0] spi_ss_reg;
+   reg [1:0] spi_clk_reg = 0;
+   reg [1:0] spi_ss_reg = 0;
    wire spi_ss_falling_edge;
    wire spi_ss_rising_edge;
 
-   reg [1:0] mosi_reg;
-   reg miso_out_reg;
-   reg [7:0] state_rd;
+   reg [1:0] mosi_reg = 0;
+   reg miso_out_reg = 0;
+   reg [7:0] state_rd = 1;
 
-   reg wr_reg_full;
+   reg wr_reg_full = 0;
    reg [23:0] wr_data_reg; //written data to send to spi/miso
-   reg wr_queue_full;
-   reg [23:0] wr_data_queue; //waiting to be written in the register
+   reg wr_queue_full = 0;
+   reg [23:0] wr_data_queue = 0; //waiting to be written in the register
 
-   reg buffer_rd_ack;
-   reg [31:0] rd_data_local;
+   reg buffer_rd_ack = 0;
+   reg [31:0] rd_data_local = 0;
 
    //states
    parameter IDLE = 0, INIT=IDLE+1, RD_WAIT_DATA=INIT+1, RD_WAIT_ACK=RD_WAIT_DATA+1, WR_WAIT_DATA=RD_WAIT_ACK+1, WR_WAIT_ACK=WR_WAIT_DATA+1;
@@ -66,6 +66,14 @@ module spi_slave(input wire clk, input wire reset,
          rd_data_available <= 0;
          buffer_rd_ack <= 0;
          state_rd <= INIT;
+         counter_read <= 0;
+         spi_clk_reg <= 0;
+         spi_ss_reg <= 0;
+         mosi_reg <= 0;
+         miso_out_reg <= 0;
+         wr_reg_full <= 0;
+         wr_queue_full <= 0;
+         wr_data_queue <= 0;
       end else begin
 
          spi_clk_reg <= {spi_clk_reg[0], SPI_SCK};
@@ -105,7 +113,7 @@ module spi_slave(input wire clk, input wire reset,
          end
          RD_WAIT_DATA : begin
             if(spi_clk_rising_edge == 1'b1) begin
-               if(counter_read == 5 && rd_data_available == 0) begin //status OK
+               if(counter_read == 5) begin //status OK
                   miso_out_reg <= 1;
                end
 
@@ -141,7 +149,7 @@ module spi_slave(input wire clk, input wire reset,
          endcase
 
          // rd_ack 受信を記録
-         if(rd_ack == 1 && rd_data_available == 1 && buffer_rd_ack == 0) begin
+         if(rd_ack == 1 && buffer_rd_ack == 0) begin
             buffer_rd_ack <= 1;
          end
 

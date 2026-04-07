@@ -88,15 +88,18 @@ module spi_mm(input wire clk, input wire reset,
                cpu_init <= 1;
                rd_ack <= 1;
             end else if(spi_module_rd_data[7:0] == 8'h2) begin //SEND FIRMWARE
-               // FIX: firm_wr==0 のときのみ firm_data を更新する。
-               // firm_wr==1 (top.v がまだ WRITE_MEMORY 処理中) のときに
-               // firm_data を上書きするとメモリに間違ったデータが書かれる。
-               // firm_wr==1 でも rd_ack は返す (spi_slave をブロックしない)。
+               // FIX: firm_wr==0 のときのみ firm_data を更新し rd_ack を返す。
+               // firm_wr==1 のときは rd_ack を返さない。spi_slave の
+               // rd_data_available が 1 のまま残るので、次の SPI トランザクションで
+               // ホストがステータスビット(bit6)=0 を受け取り自動的にリトライする。
+               // これにより WRITE_MEMORY がまだ処理中のときにパケットが
+               // サイレントに失われてカウンタがずれる問題を防ぐ。
                if(firm_wr == 0) begin
                   firm_data <= spi_module_rd_data[23:8];
+                  firm_wr <= 1;
+                  rd_ack <= 1;
                end
-               firm_wr <= 1;
-               rd_ack <= 1;
+               // firm_wr==1 の場合: rd_ack を返さない。ホストが自動リトライ。
             end else if (spi_module_rd_data[7:0] == 8'h3) begin //START CPU
                cpu_start <= 1;
                rd_ack <= 1;
