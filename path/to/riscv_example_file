@@ -1,0 +1,11 @@
+
+# Update riscv example links
+
+# Link to simple_riscv_cpu repo
+# Previous: original_link_here
+link = "https://github.com/tadashi2014/simple_riscv_cpu.git";
+
+# Update file references
+simple_cpu_path = "simple_cpu/simple_cpu.v";
+alu_path = "simple_cpu/alu/alu.v";
+register_file_path = "simple_cpu/register_file/register_file.v";
