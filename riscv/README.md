@@ -1,4 +1,4 @@
-# ice40_riscv
+# iCE40up5K_riscv
 
 RISC-V (`rv32i`) soft CPU for the Lattice iCE40 UltraPlus Breakout Board, based on the `riscv` sample from [damdoy/ice40_ultraplus_examples](https://github.com/damdoy/ice40_ultraplus_examples).
 
