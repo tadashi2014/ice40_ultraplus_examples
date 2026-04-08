@@ -2,7 +2,7 @@
 `include "gpio_mm.v"
 `include "memory.v"
 `include "spi_mm.v"
-`include "simple_cpu/simple_cpu.v"
+`include "simple_riscv_cpu/simple_cpu/simple_cpu.v"
 
 module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, input SPI_SCK, input SPI_SS, input SPI_MOSI, output SPI_MISO);
 

@@ -3,7 +3,7 @@ pcf_file = ../common/io.pcf
 
 # ---- Production build (requires SPI firmware load to start CPU) ----
 build:
-	yosys -p "synth_ice40 -top top -json $(filename).json -blif $(filename).blif" $(filename).v simple_cpu/alu.v simple_cpu/register_file.v
+	yosys -p "synth_ice40 -top top -json $(filename).json -blif $(filename).blif" $(filename).v simple_riscv_cpu/simple_cpu/alu/alu.v simple_riscv_cpu/simple_cpu/register_file/register_file.v
 	nextpnr-ice40 --up5k --json $(filename).json --pcf $(pcf_file) --asc $(filename).asc
 	icepack $(filename).asc $(filename).bin
 
@@ -23,7 +23,7 @@ prog_flash:
 #   0-2 s : Blue ON
 #   2 s+  : Blue OFF, Green ON (error from 0x00000000 instruction)
 debug:
-	yosys -p "synth_ice40 -top top -json top_timer_debug.json -blif top_timer_debug.blif" top_timer_debug.v simple_cpu/alu.v simple_cpu/register_file.v
+	yosys -p "synth_ice40 -top top -json top_timer_debug.json -blif top_timer_debug.blif" top_timer_debug.v simple_riscv_cpu/simple_cpu/alu/alu.v simple_riscv_cpu/simple_cpu/register_file/register_file.v
 	nextpnr-ice40 --up5k --json top_timer_debug.json --pcf $(pcf_file) --asc top_timer_debug.asc
 	icepack top_timer_debug.asc top_timer_debug.bin
 
@@ -51,7 +51,7 @@ prog_blink:
 #   LED_B OFF + LED_G ON  : CPU started but cpu_error_instruction fired (bad firmware) ✗
 #   LED_B stays ON        : host never sent SPI_START_CPU (SPI path problem) ✗
 spi_debug:
-	yosys -p "synth_ice40 -top top -json top_spi_debug.json -blif top_spi_debug.blif" top_spi_debug.v simple_cpu/alu.v simple_cpu/register_file.v
+	yosys -p "synth_ice40 -top top -json top_spi_debug.json -blif top_spi_debug.blif" top_spi_debug.v simple_riscv_cpu/simple_cpu/alu/alu.v simple_riscv_cpu/simple_cpu/register_file/register_file.v
 	nextpnr-ice40 --up5k --json top_spi_debug.json --pcf $(pcf_file) --asc top_spi_debug.asc
 	icepack top_spi_debug.asc top_spi_debug.bin
 
@@ -72,7 +72,7 @@ prog_spi_debug:
 #   LED_G ON : cpu_error_instruction fired (ROM encoding bug, should not happen).
 #   LED_R OFF + LED_G OFF : CPU is not starting (check power-on reset logic).
 selftest:
-	yosys -p "synth_ice40 -top top -json top_selftest.json" top_selftest.v simple_cpu/alu.v simple_cpu/register_file.v
+	yosys -p "synth_ice40 -top top -json top_selftest.json" top_selftest.v simple_riscv_cpu/simple_cpu/alu/alu.v simple_riscv_cpu/simple_cpu/register_file/register_file.v
 	nextpnr-ice40 --up5k --json top_selftest.json --pcf $(pcf_file) --asc top_selftest.asc
 	icepack top_selftest.asc top_selftest.bin
 
