@@ -29,7 +29,11 @@
 `include "gpio_mm.v"
 `include "rom.v"
 `include "spi_mm.v"
+`ifdef CPU_SIMPLE
 `include "simple_riscv_cpu/simple_cpu/simple_cpu.v"
+`else
+`include "picorv32/picorv32_simple_cpu.v"
+`endif
 
 module top(input [3:0] SW, input clk,
            output LED_R, output LED_G, output LED_B,

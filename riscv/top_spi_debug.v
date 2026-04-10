@@ -29,7 +29,11 @@
 `include "gpio_mm.v"
 `include "memory.v"
 `include "spi_mm.v"
+`ifdef CPU_SIMPLE
 `include "simple_riscv_cpu/simple_cpu/simple_cpu.v"
+`else
+`include "picorv32/picorv32_simple_cpu.v"
+`endif
 
 module top(input [3:0] SW, input clk,
            output LED_R, output LED_G, output LED_B,
@@ -80,6 +84,7 @@ module top(input [3:0] SW, input clk,
    reg memory_wr_req;
    reg [31:0] memory_wr_addr;
    reg [31:0] memory_wr_data;
+   reg [3:0] memory_wr_mask;
 
    // Debug latches
    reg cpu_ever_error;
@@ -110,7 +115,7 @@ module top(input [3:0] SW, input clk,
 
    memory memory_inst(.clk(clk), .reset(memory_reset),
       .rd_req(memory_rd_req), .rd_addr(memory_rd_addr[14:0]), .rd_data(memory_rd_data), .data_valid(memory_rd_valid),
-      .wr_req(memory_wr_req), .wr_addr(memory_wr_addr[14:0]), .wr_data(memory_wr_data)
+      .wr_req(memory_wr_req), .wr_addr(memory_wr_addr[14:0]), .wr_data(memory_wr_data), .wr_mask(memory_wr_mask)
    );
 
    // LED (active-low: signal 0 = ON, signal 1 = OFF):
@@ -143,6 +148,7 @@ module top(input [3:0] SW, input clk,
       memory_reset = 0;
       memory_rd_req = 0; memory_rd_addr = 0;
       memory_wr_req = 0; memory_wr_addr = 0; memory_wr_data = 0;
+      memory_wr_mask = 4'b1111;
       gpio_reset = 0;
       gpio_rd_req = 0; gpio_rd_addr = 0;
       counter_firmware_address = 0;
@@ -164,7 +170,7 @@ module top(input [3:0] SW, input clk,
       spi_cpu_start_ack <= 0; spi_cpu_init_ack <= 0;
       spi_wr_req <= 0; spi_wr_addr <= 0; spi_wr_data <= 0;
       memory_rd_req <= 0;
-      memory_wr_req <= 0; memory_wr_addr <= 0; memory_wr_data <= 0;
+      memory_wr_req <= 0; memory_wr_addr <= 0; memory_wr_data <= 0; memory_wr_mask <= 4'b1111;
 
       // Error latch (only meaningful after cpu_reset goes low)
       if(cpu_error_instruction == 1) cpu_ever_error <= 1;
@@ -188,6 +194,7 @@ module top(input [3:0] SW, input clk,
             firmware_data_buf <= spi_firm_data[15:0];
          end else begin
             memory_wr_data <= {spi_firm_data[15:0], firmware_data_buf};
+            memory_wr_mask <= 4'b1111;
             memory_wr_req <= 1;
             memory_wr_addr <= {counter_firmware_address[13:1], 2'b00};
             firmware_loaded <= 1;   // at least one 32-bit word has been written
@@ -249,6 +256,7 @@ module top(input [3:0] SW, input clk,
             memory_wr_req <= 1;
             memory_wr_addr <= cpu_write_addr[14:0];
             memory_wr_data <= cpu_write_data;
+            memory_wr_mask <= cpu_memory_mask;
          end
          if(cpu_write_addr[31:8] == 24'h000080) begin
             spi_wr_req <= 1;

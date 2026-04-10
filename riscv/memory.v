@@ -7,7 +7,7 @@
 
 module memory(input wire clk, input wire reset,
       input wire rd_req, input wire [14:0] rd_addr, output reg [31:0] rd_data, output reg data_valid,
-      input wire wr_req, input wire [14:0] wr_addr, input wire [31:0] wr_data
+      input wire wr_req, input wire [14:0] wr_addr, input wire [31:0] wr_data, input wire [3:0] wr_mask
    );
 
    //access to spram
@@ -63,8 +63,8 @@ module memory(input wire clk, input wire reset,
       if (wr_req == 1) begin
          ram_wren_0 = 1;
          ram_wren_1 = 1;
-         mask_wren_0 = 4'b1111;
-         mask_wren_1 = 4'b1111;
+         mask_wren_0 = {{2{wr_mask[1]}}, {2{wr_mask[0]}}};
+         mask_wren_1 = {{2{wr_mask[3]}}, {2{wr_mask[2]}}};
          ram_data_in_0 = wr_data[15:0];
          ram_data_in_1 = wr_data[31:16];
          ram_addr_0 = wr_addr[14:2];
