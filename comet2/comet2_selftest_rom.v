@@ -1,7 +1,7 @@
 /*
  * COMET II self-test ROM, word-addressed.
  *
- * The program repeatedly lights R, G, B through GPIO at word address 0xC100.
+ * The program repeatedly lights R, G, B through GPIO at word address 0xF100.
  * After the last delay it executes SVC 0.  The CPU treats SVC 0 as a reset
  * vector jump plus SP reload from mem[31], so the pattern restarts.
  */
@@ -36,11 +36,11 @@ module comet2_selftest_rom(input wire clk, input wire reset,
    begin
       case (buf_rd_addr)
       16'h0000: rd_data = 16'h0020; // reset vector
-      16'h001F: rd_data = 16'hBFF0; // initial SP
+      16'h001F: rd_data = 16'hEFF0; // initial SP
 
       // START:
       16'h0020: rd_data = 16'h1210; // LAD GR1,GPIO
-      16'h0021: rd_data = 16'hC100;
+      16'h0021: rd_data = 16'hF100;
       16'h0022: rd_data = 16'h1240; // LAD GR4,1 (loop decrement)
       16'h0023: rd_data = 16'h0001;
 

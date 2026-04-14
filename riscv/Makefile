@@ -8,19 +8,15 @@ cpu_extra_srcs =
 else ifeq ($(CPU),simple)
 cpu_define = -DCPU_SIMPLE
 cpu_extra_srcs = simple_riscv_cpu/simple_cpu/alu/alu.v simple_riscv_cpu/simple_cpu/register_file/register_file.v
-else ifeq ($(CPU),comet2)
-cpu_define = -DCPU_COMET2
-cpu_extra_srcs =
-filename = top_comet
 else
-$(error CPU must be "picorv32", "simple", or "comet2")
+$(error CPU must be "picorv32" or "simple")
 endif
 
 yosys_cpu = yosys $(cpu_define)
 
 # ---- Production build (requires SPI firmware load to start CPU) ----
-# Select CPU with CPU=picorv32 (default), CPU=simple, or CPU=comet2.
-# Example: make CPU=comet2 build
+# Select CPU with CPU=picorv32 (default) or CPU=simple.
+# Example: make CPU=simple build
 build:
 	$(yosys_cpu) -p "synth_ice40 -top top -json $(filename).json -blif $(filename).blif" $(filename).v $(cpu_extra_srcs)
 	nextpnr-ice40 --up5k --json $(filename).json --pcf $(pcf_file) --asc $(filename).asc
@@ -78,21 +74,16 @@ spi_debug:
 prog_spi_debug:
 	iceprog -S top_spi_debug.bin
 
-# ---- Self-test build: ROM embedded in bitstream, no SPI needed ----
-# Firmware for CPU=picorv32/simple (embedded ROM):
+# ---- Self-test build: 5-instruction ROM embedded in bitstream, no SPI needed ----
+# Firmware (embedded ROM):
 #   lui  a0, 8       ; a0 = 0x8000
 #   addi a0, a0, 256 ; a0 = 0x8100  (GPIO address)
 #   addi a1, x0, 1   ; a1 = 1
 #   sw   a1, 0(a0)   ; GPIO[0]=1  -> LED_R ON
 #   jal  x0, 0       ; infinite loop
-# Firmware for CPU=comet2 is in comet2_selftest_rom.v:
-#   mem[0]  = reset vector
-#   mem[19] = initial SP
-#   GPIO word address 0xC100 drives the low 3 LED bits
-#   R/G/B blink sequence, software wait loop, then SVC 0 reloads SP and jumps via vector 0
 #
 # Expected result within a few microseconds of programming:
-#   LED_R/G/B activity : CPU fetch/decode/execute and GPIO write all work.
+#   LED_R ON : CPU fetch/decode/execute and GPIO write all work.
 #              The problem is ONLY in the SPI firmware-load path.
 #   LED_G ON : selected CPU reported an error/trap (ROM encoding bug, should not happen).
 #   LED_R OFF + LED_G OFF : CPU is not starting (check power-on reset logic).

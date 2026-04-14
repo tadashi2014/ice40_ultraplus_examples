@@ -71,8 +71,8 @@ static int comet_send_in_char(uint8_t ch)
 
    /*
     * CPU sees:
-    *   C001 low byte  = opcode
-    *   C002 low byte  = val[1]
+    *   F001 low byte  = opcode
+    *   F002 low byte  = val[1]
     * so the character is placed in val[1].
     */
    uint8_t payload[3] = {0x00, ch, 0x00};

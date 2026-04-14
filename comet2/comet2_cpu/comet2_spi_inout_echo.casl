@@ -6,12 +6,12 @@
 ;   - mem[2]  : SVC 2 vector -> OUT handler
 ;   - mem[31] : initial SP
 ;   - COMET MMIO map:
-;       #C000 : SPI status      bit0=host->cpu packet ready, bit1=cpu->host busy
-;       #C001 : SPI RX low word  low byte=opcode
-;       #C002 : SPI RX high word low byte=payload byte 1
-;       #C003 : SPI RX ack       write non-zero to consume packet
-;       #C004 : SPI TX low word  low byte=opcode, high byte=payload byte 0
-;       #C005 : SPI TX commit    low byte=payload byte 1, write to send
+;       #F000 : SPI status      bit0=host->cpu packet ready, bit1=cpu->host busy
+;       #F001 : SPI RX low word  low byte=opcode
+;       #F002 : SPI RX high word low byte=payload byte 1
+;       #F003 : SPI RX ack       write non-zero to consume packet
+;       #F004 : SPI TX low word  low byte=opcode, high byte=payload byte 0
+;       #F005 : SPI TX commit    low byte=payload byte 1, write to send
 ;   - Host -> COMET packet:
 ;       opcode 0x10, payload byte 1 = ASCII character
 ;   - COMET -> Host packet:
@@ -25,7 +25,7 @@ COMETIO START
         DC      SVC1_IN
         DC      SVC2_OUT
         DS      28
-        DC      #BFF0
+        DC      #EFF0
 
 ; "IN BUF,LEN" macro expansion:
 ;   LAD GR1,BUF
@@ -47,34 +47,34 @@ MAIN    LAD     GR1,BUF
 
 ; SVC 1: receive GR2 characters from host into [GR1..]
 ; clobbers GR3, GR4
-SVC1_IN LD      GR3,#C000
+SVC1_IN LD      GR3,#F000
         AND     GR3,ONE
         JZE     SVC1_IN
 
-        LD      GR3,#C001
+        LD      GR3,#F001
         AND     GR3,MASK8
         CPA     GR3,OP_IN
         JNZ     SVC1_DROP
 
-        LD      GR3,#C002
+        LD      GR3,#F002
         AND     GR3,MASK8
         ST      GR3,0,GR1
         LAD     GR1,1,GR1
         LAD     GR4,1
-        ST      GR4,#C003
+        ST      GR4,#F003
         SUBA    GR2,ONE
         JNZ     SVC1_IN
         RET
 
 SVC1_DROP
         LAD     GR4,1
-        ST      GR4,#C003
+        ST      GR4,#F003
         JUMP    SVC1_IN
 
 ; SVC 2: send GR2 characters from [GR1..] to host
 ; clobbers GR3, GR4
 SVC2_OUT
-        LD      GR3,#C000
+        LD      GR3,#F000
         AND     GR3,TWO
         JNZ     SVC2_OUT
 
@@ -82,9 +82,9 @@ SVC2_OUT
         AND     GR3,MASK8
         SLL     GR3,8
         OR      GR3,OP_OUT
-        ST      GR3,#C004
+        ST      GR3,#F004
         LAD     GR4,0
-        ST      GR4,#C005
+        ST      GR4,#F005
         LAD     GR1,1,GR1
         SUBA    GR2,ONE
         JNZ     SVC2_OUT

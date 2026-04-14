@@ -9,10 +9,6 @@ This fork keeps the original idea and architecture:
 - memory-mapped GPIO for the RGB LED
 - memory-mapped SPI link to a host computer
 
-This tree also contains an experimental COMET II implementation that reuses the
-same board, SPI loader, and host-communication ideas while exposing a 16-bit
-word-addressed CASL II style machine.
-
 The current version has been debugged on real hardware and is now working end-to-end.
 
 ## Verified Status
@@ -69,14 +65,6 @@ flowchart LR
 - `spi/`: SPI slave and shared FTDI host library
 - `common/`: board constraint file
 
-### COMET2-specific files
-
-- `top_comet.v`: COMET II production top
-- `comet2_cpu/`: COMET II core and 16-bit memory
-- `comet2_selftest_rom.v`: ROM-based COMET II self-test program
-- `comet2_cpu/spi_test/comet2_inout_main.bin`: SPI-loaded COMET II echo test image
-- `host_server/comet2_inout_host.c`: host utility for COMET II IN/OUT testing
-
 ## Quick Start
 
 ### 1. Build and program the production bitstream
@@ -102,64 +90,6 @@ cd ..
 make clean
 make
 ./host
-```
-
-## COMET II Quick Start
-
-The COMET II path is kept separate from the original RISC-V build. Use
-`CPU=comet2` to select it.
-
-### 1. Build and program the COMET II bitstream
-
-```sh
-cd riscv
-make clean
-make CPU=comet2
-make CPU=comet2 prog
-```
-
-### 2. Run the COMET II self-test
-
-This self-test is ROM-based and does not require SPI firmware loading.
-
-```sh
-make clean selftest CPU=comet2
-make prog_selftest
-```
-
-Expected result:
-
-- blue during reset
-- then RGB activity driven by the COMET II self-test ROM
-- the ROM eventually executes `SVC 0`, reloads `SP`, and restarts
-
-### 3. Run the COMET II IN/OUT echo test over SPI
-
-This test loads a COMET II program over SPI, starts the CPU, then exchanges
-characters with `SVC 1` / `SVC 2`.
-
-```sh
-make clean
-make CPU=comet2
-make CPU=comet2 prog
-cd host_server
-make comet2_inout_host
-./comet2_inout_host
-```
-
-Expected host output:
-
-```text
-init..
-init..
-loaded firmware image: 332 bytes
-sending: HELLO
-echo[0] = 0x48 'H'
-echo[1] = 0x45 'E'
-echo[2] = 0x4c 'L'
-echo[3] = 0x4c 'L'
-echo[4] = 0x4f 'O'
-echo[5] = 0x0a '.'
 ```
 
 ## Toolchain Notes
@@ -218,9 +148,6 @@ This confirms:
 - ROM timing
 - GPIO MMIO
 
-For `CPU=comet2`, the self-test uses `comet2_selftest_rom.v` instead of the
-RISC-V ROM image and exercises COMET II reset-vector boot plus GPIO writes.
-
 ### SPI debug
 
 Confirms firmware upload and CPU start over SPI.
@@ -246,44 +173,6 @@ RAM   : 0x0000 - 0x7fff
 SPI   : 0x8000 - 0x80ff
 GPIO  : 0x8100 - 0x81ff
 ```
-
-## COMET II Notes
-
-The COMET II implementation uses a separate 16-bit word-addressed view of the
-system.
-
-### COMET II assumptions used in this repository
-
-- little-endian CPU
-- `SVC` uses the low byte of its operand as a vector number
-- `SVC 0` is treated as reset-like control flow
-- reset vector is loaded from memory word `0x0000`
-- initial `SP` is loaded from memory word `0x001f`
-- `SVC 1` and `SVC 2` are used by the IN/OUT test program
-
-### COMET II memory map
-
-```text
-Main memory : 0x0000 - 0xbfff   (16-bit word addresses)
-SPI MMIO    : 0xc000 - 0xc0ff
-GPIO MMIO   : 0xc100 - 0xc1ff
-```
-
-### COMET II SPI MMIO convention used by the echo test
-
-```text
-0xC000  SPI status
-0xC001  RX packet low word
-0xC002  RX packet high word
-0xC003  RX acknowledge / assert-read
-0xC004  TX packet low word
-0xC005  TX packet high word / commit
-```
-
-The COMET II echo sample uses:
-
-- host -> COMET : opcode `0x10`, ASCII byte payload
-- COMET -> host : opcode `0x20`, ASCII byte payload
 
 ## SPI Commands
 
@@ -333,8 +222,6 @@ This repository started from the upstream `riscv` sample and adds both portabili
 - fixed firmware write acknowledge handling in the top-level path
 - kept firmware words from being silently overwritten or dropped during transfer
 - added firmware-side pacing for `assert_read` and write-buffer availability
-- fixed COMET II SPI MMIO halfword selection so `C002` reads do not corrupt
-  later status reads
 
 ### Firmware updates
 
