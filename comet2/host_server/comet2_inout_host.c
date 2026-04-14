@@ -1,7 +1,7 @@
 /*
  * Host-side SPI demo for the COMET II IN/OUT sample.
  *
- * Protocol used by comet2_spi_inout_echo.casl:
+ * Protocol used by comet2_spi_inout_echo.cas:
  *   host -> COMET : opcode 0x10, val[1] = ASCII byte
  *   COMET -> host : byte0   0x20, byte1 = ASCII byte
  *
