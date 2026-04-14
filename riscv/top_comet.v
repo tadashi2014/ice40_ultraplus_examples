@@ -74,9 +74,7 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    wire comet_write_mmio_spi = (cpu_write_addr[15:8] == 8'hC0);
    wire comet_mmio_gpio = (cpu_read_addr[15:8] == 8'hC1);
    wire comet_write_mmio_gpio = (cpu_write_addr[15:8] == 8'hC1);
-   wire gpio_led_r;
-   wire gpio_led_g;
-   wire gpio_led_b;
+
    spi_mm spi_mm_inst(.clk(clk), .reset(spi_reset),
       .SPI_SCK(SPI_SCK), .SPI_SS(SPI_SS), .SPI_MOSI(SPI_MOSI), .SPI_MISO(SPI_MISO),
       .rd_req(spi_rd_req), .rd_addr(spi_rd_addr), .rd_data(spi_rd_data), .data_valid(spi_rd_valid),
@@ -101,17 +99,10 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
 `endif
 
    gpio_mm gpio_mm_inst(.clk(clk), .reset(gpio_reset),
-      .LED_R(gpio_led_r), .LED_G(gpio_led_g), .LED_B(gpio_led_b),
+      .LED_R(LED_R), .LED_G(LED_G), .LED_B(LED_B),
       .rd_req(gpio_rd_req), .rd_addr(gpio_rd_addr), .rd_data(gpio_rd_data), .data_valid(gpio_rd_valid),
       .wr_req(gpio_wr_req), .wr_addr(gpio_wr_addr), .wr_data(gpio_wr_data)
    );
-
-   // Safe debug overlay:
-   //   while cpu_reset=1 : blue on
-   //   after start       : green on if CPU faults, otherwise show firmware GPIO
-   assign LED_R = cpu_reset ? 1'b1 : (cpu_error_instruction ? 1'b1 : gpio_led_r);
-   assign LED_G = cpu_reset ? 1'b1 : (cpu_error_instruction ? 1'b0 : gpio_led_g);
-   assign LED_B = cpu_reset ? 1'b0 : (cpu_error_instruction ? 1'b1 : gpio_led_b);
 
 `ifdef CPU_COMET2
    wire [15:0] comet_memory_rd_data;

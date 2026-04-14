@@ -29,10 +29,15 @@
 `include "gpio_mm.v"
 `include "rom.v"
 `include "spi_mm.v"
+`ifdef CPU_COMET2
+`include "comet2_cpu/comet2_cpu.v"
+`include "comet2_selftest_rom.v"
+`else
 `ifdef CPU_SIMPLE
 `include "simple_riscv_cpu/simple_cpu/simple_cpu.v"
 `else
 `include "picorv32/picorv32_simple_cpu.v"
+`endif
 `endif
 
 module top(input [3:0] SW, input clk,
@@ -81,6 +86,10 @@ module top(input [3:0] SW, input clk,
    reg [31:0] rom_rd_addr;
    wire [31:0] rom_rd_data;
    wire rom_rd_valid;
+   wire [15:0] comet_rom_rd_data;
+   wire comet_rom_rd_valid;
+   reg [15:0] comet_spi_write_lo;
+   reg comet_spi_read_hi;
 
    // Timer: 12MHz clock, ~2 seconds = 24_000_000 counts
    reg [24:0] timer;
@@ -101,6 +110,15 @@ module top(input [3:0] SW, input clk,
       .cpu_init(spi_cpu_init), .cpu_init_ack(spi_cpu_init_ack)
    );
 
+`ifdef CPU_COMET2
+   comet2_cpu comet2_cpu_inst(.clk(clk), .reset(cpu_reset),
+      .read_req(cpu_read_req), .read_addr(cpu_read_addr),
+      .read_data(cpu_read_data), .read_data_valid(cpu_read_data_valid),
+      .write_req(cpu_write_req), .write_addr(cpu_write_addr),
+      .write_data(cpu_write_data), .memory_mask(cpu_memory_mask),
+      .error_instruction(cpu_error_instruction), .debug(cpu_debug)
+   );
+`else
    simple_cpu simple_cpu_inst(.clk(clk), .reset(cpu_reset),
       .read_req(cpu_read_req), .read_addr(cpu_read_addr),
       .read_data(cpu_read_data), .read_data_valid(cpu_read_data_valid),
@@ -108,6 +126,7 @@ module top(input [3:0] SW, input clk,
       .write_data(cpu_write_data), .memory_mask(cpu_memory_mask),
       .error_instruction(cpu_error_instruction), .debug(cpu_debug)
    );
+`endif
 
    gpio_mm gpio_mm_inst(.clk(clk), .reset(gpio_reset),
       .LED_R(gpio_led_r), .LED_G(gpio_led_g), .LED_B(gpio_led_b),
@@ -116,19 +135,34 @@ module top(input [3:0] SW, input clk,
       .wr_req(gpio_wr_req), .wr_addr(gpio_wr_addr), .wr_data(gpio_wr_data)
    );
 
+`ifdef CPU_COMET2
+   comet2_selftest_rom comet2_selftest_rom_inst(.clk(clk), .reset(cpu_reset),
+      .rd_req(rom_rd_req), .rd_addr(rom_rd_addr[15:0]),
+      .rd_data(comet_rom_rd_data), .data_valid(comet_rom_rd_valid)
+   );
+   assign rom_rd_data = {16'b0, comet_rom_rd_data};
+   assign rom_rd_valid = comet_rom_rd_valid;
+`else
    rom rom_inst(.clk(clk), .reset(cpu_reset),
       .rd_req(rom_rd_req), .rd_addr(rom_rd_addr[14:0]),
       .rd_data(rom_rd_data), .data_valid(rom_rd_valid),
       .wr_req(1'b0), .wr_addr(15'b0), .wr_data(32'b0)
    );
+`endif
 
    // LED:
    // Blue  : ON while cpu_reset=1 (waiting for timer ~2s), OFF after reset release
    // Red   : controlled by ROM self-test firmware via gpio_mm (gpio_reg[0])
    // Green : latches ON if cpu_error_instruction fires after reset release
+`ifdef CPU_COMET2
+   assign LED_B = cpu_reset ? 1'b0 : gpio_led_b;
+   assign LED_R = gpio_led_r;
+   assign LED_G = gpio_led_g;
+`else
    assign LED_B = cpu_reset ? 1'b0 : 1'b1;
    assign LED_R = gpio_led_r;
    assign LED_G = cpu_ever_error ? 1'b0 : 1'b1;
+`endif
 
    reg [31:0] state;
    parameter IDLE=0, REQ_READ_SPI_STATUS=2, WRITE_MEMORY=6, START_CPU=9, INIT_CPU=10;
@@ -147,6 +181,8 @@ module top(input [3:0] SW, input clk,
       gpio_rd_req = 0; gpio_rd_addr = 0;
       counter_firmware_address = 0;
       firmware_data_buf = 0;
+      comet_spi_write_lo = 0;
+      comet_spi_read_hi = 0;
       timer = 0;
       timer_fired = 0;
       cpu_ever_error = 0;
@@ -185,6 +221,32 @@ module top(input [3:0] SW, input clk,
 
       // CPU read request dispatch (identical to top_timer_debug.v / top.v)
       if(cpu_read_req_buf == 0 && cpu_read_req == 1) begin
+`ifdef CPU_COMET2
+         if(cpu_read_addr[15:14] != 2'b11) begin
+            rom_rd_req  <= 1;
+            rom_rd_addr <= cpu_read_addr;
+         end
+         if(cpu_read_addr[15:8] == 8'hC0) begin
+            spi_rd_req  <= 1;
+            if(cpu_read_addr[3:0] == 4'h0) begin
+               spi_rd_addr <= 32'h0;
+               comet_spi_read_hi <= 1'b0;
+            end else if(cpu_read_addr[3:0] == 4'h1 || cpu_read_addr[3:0] == 4'h2) begin
+               spi_rd_addr <= 32'h4;
+               comet_spi_read_hi <= cpu_read_addr[3:0] == 4'h2;
+            end else if(cpu_read_addr[3:0] == 4'h3) begin
+               spi_rd_addr <= 32'h8;
+               comet_spi_read_hi <= 1'b0;
+            end else begin
+               spi_rd_addr <= 32'hC;
+               comet_spi_read_hi <= 1'b0;
+            end
+         end
+         if(cpu_read_addr[15:8] == 8'hC1) begin
+            gpio_rd_req  <= 1;
+            gpio_rd_addr <= 0;
+         end
+`else
          if(cpu_read_addr[31:15] == 17'h0) begin  // 0x0000 - 0x7fff -> ROM
             rom_rd_req  <= 1;
             rom_rd_addr <= cpu_read_addr[14:0];
@@ -197,6 +259,7 @@ module top(input [3:0] SW, input clk,
             gpio_rd_req  <= 1;
             gpio_rd_addr <= cpu_read_addr[7:0];
          end
+`endif
       end
 
       if(rom_rd_valid == 1) begin
@@ -204,16 +267,44 @@ module top(input [3:0] SW, input clk,
          cpu_read_data_valid <= 1;
       end
       if(spi_rd_valid == 1) begin
+`ifdef CPU_COMET2
+         cpu_read_data       <= comet_spi_read_hi ? {16'b0, spi_rd_data[31:16]} : {16'b0, spi_rd_data[15:0]};
+`else
          cpu_read_data       <= spi_rd_data;
+`endif
          cpu_read_data_valid <= 1;
       end
       if(gpio_rd_valid == 1) begin
+`ifdef CPU_COMET2
+         cpu_read_data       <= {16'b0, gpio_rd_data[15:0]};
+`else
          cpu_read_data       <= gpio_rd_data;
+`endif
          cpu_read_data_valid <= 1;
       end
 
       // CPU write dispatch (identical to top_timer_debug.v / top.v)
       if(cpu_write_req == 1) begin
+`ifdef CPU_COMET2
+         if(cpu_write_addr[15:8] == 8'hC0) begin
+            if(cpu_write_addr[3:0] == 4'h3) begin
+               spi_wr_req  <= 1;
+               spi_wr_addr <= 32'h8;
+               spi_wr_data <= {16'b0, cpu_write_data[15:0]};
+            end else if(cpu_write_addr[3:0] == 4'h4) begin
+               comet_spi_write_lo <= cpu_write_data[15:0];
+            end else if(cpu_write_addr[3:0] == 4'h5) begin
+               spi_wr_req  <= 1;
+               spi_wr_addr <= 32'hC;
+               spi_wr_data <= {cpu_write_data[15:0], comet_spi_write_lo};
+            end
+         end
+         if(cpu_write_addr[15:8] == 8'hC1) begin
+            gpio_wr_req  <= 1;
+            gpio_wr_addr <= 0;
+            gpio_wr_data <= {16'b0, cpu_write_data[15:0]};
+         end
+`else
          if(cpu_write_addr[31:8] == 24'h000080) begin
             spi_wr_req  <= 1;
             spi_wr_addr <= cpu_write_addr[7:0];
@@ -224,6 +315,7 @@ module top(input [3:0] SW, input clk,
             gpio_wr_addr <= cpu_write_addr[7:0];
             gpio_wr_data <= cpu_write_data;
          end
+`endif
       end
    end
 
