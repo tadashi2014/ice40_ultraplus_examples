@@ -1,7 +1,7 @@
 /*
  * Host-side SPI demo for the COMET II IN/OUT sample.
  *
- * Protocol used by comet2_spi_inout_echo.cas:
+ * Protocol used by spi_debug_firmware/comet2_spi_inout_echo.cas:
  *   host -> COMET : opcode 0x10, val[1] = ASCII byte
  *   COMET -> host : byte0   0x20, byte1 = ASCII byte
  *
@@ -22,7 +22,7 @@
 #define SPI_START_CPU       0x03
 #define COMET_CMD_IN_CHAR   0x10
 #define COMET_RSP_OUT_CHAR  0x20
-#define FIRMWARE_PATH       "../comet2_cpu/spi_test/comet2_inout_main.bin"
+#define FIRMWARE_PATH       "./spi_debug_firmware/comet2_inout_main.bin"
 #define MAX_FIRMWARE_BYTES  (1 << 14)
 
 static void load_and_start_comet_firmware(void)

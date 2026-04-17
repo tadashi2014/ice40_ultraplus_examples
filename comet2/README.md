@@ -13,8 +13,8 @@ independently.
 - `top_timer_debug.v`: timer/debug top
 - `top_selftest.v`: ROM-based self-test top
 - `comet2_selftest_rom.v`: self-test ROM contents
-- `comet2_cpu/`: COMET II core, 16-bit memory, CASL sample, and SPI test images
-- `host_server/`: host-side SPI echo test utility
+- `comet2_cpu/`: COMET II core, 16-bit memory, and CASL/sample support files
+- `host_server/`: host-side SPI echo utility and its paired SPI debug firmware
 
 ## Build
 
@@ -45,6 +45,16 @@ make prog
 cd host_server
 make
 ./comet2_inout_host
+```
+
+### CPU unit test
+
+`comet2/comet2_cpu/verilator_test/` contains a small Verilator-based unit test
+for the COMET II core itself.
+
+```sh
+cd comet2/comet2_cpu/verilator_test
+make test
 ```
 
 ## COMET II memory map
@@ -96,7 +106,7 @@ program after a visible LED sequence.
 
 ## SPI IN/OUT echo test
 
-The sample program in `comet2_cpu/spi_test/` uses:
+The sample program in `host_server/spi_debug_firmware/` uses:
 
 - `SVC 1` for IN
 - `SVC 2` for OUT
