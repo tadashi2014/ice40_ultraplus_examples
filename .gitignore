@@ -6,3 +6,8 @@
 host
 *.o
 *.oo
+__pycache__/
+*.lst
+*.obj
+*.out
+*.exe
