@@ -1,0 +1,86 @@
+NAME:hanoi
+SIZE:0057
+START:0020R
+
+0020:              [00001]  ; ハノイの塔を解くプログラム
+0020:              [00002]  MAIN   START
+0020:1000-0066R    [00003]         LD      GR0,N
+0022:1010-0068R    [00004]         LD      GR1,A
+0024:1020-0069R    [00005]         LD      GR2,B
+0026:1030-006AR    [00006]         LD      GR3,C
+0028:8000-002BR    [00007]         CALL    HANOI       ; hanoi(3, A, B, C)
+002A:8100          [00008]         RET
+002B:              [00009]  
+002B:              [00010]  ; hanoi(N, X, Y, Z)
+002B:4000-0076R    [00011]  HANOI  CPA     GR0,=1      ; if N == 1 then
+002D:6300-0055R    [00012]         JZE     DISP        ;  move it, return
+002F:2100-0076R    [00013]         SUBA    GR0,=1      ; N - 1
+0031:7002-0000     [00014]         PUSH    0,GR2       ; swap GR2 GR3
+0033:1423          [00015]         LD      GR2,GR3
+0034:7130          [00016]         POP     GR3
+0035:8000-002BR    [00017]         CALL    HANOI       ; hanoi(N-1, X, Z, Y)
+0037:1110-0070R    [00018]         ST      GR1,MSG1
+0039:1120-0075R    [00019]         ST      GR2,MSG2    ; now GR2 holds Z
+003B:              [00020]         OUT     MSG,LNG     ; 'from X to Z'
+003B:7001-0000                           =>  PUSH 0,GR1
+003D:7002-0000                           =>  PUSH 0,GR2
+003F:1210-006BR                          =>  LAD GR1,MSG
+0041:1220-0067R                          =>  LAD GR2,LNG
+0043:F000-0002                           =>  SVC 2
+0045:7120                                =>  POP GR2
+0046:7110                                =>  POP GR1
+0047:7002-0000     [00021]         PUSH    0,GR2       ; rotate registers
+0049:1421          [00022]         LD      GR2,GR1
+004A:1413          [00023]         LD      GR1,GR3
+004B:7130          [00024]         POP     GR3
+004C:8000-002BR    [00025]         CALL    HANOI       ; hanoi(N-1, Y, X, Z)
+004E:7002-0000     [00026]         PUSH    0,GR2       ; restore registers
+0050:1421          [00027]         LD      GR2,GR1
+0051:7110          [00028]         POP     GR1
+0052:2000-0076R    [00029]         ADDA    GR0,=1      ; also N has restored
+0054:8100          [00030]         RET
+0055:              [00031]  
+0055:1110-0070R    [00032]  DISP   ST      GR1,MSG1    ; 'from X to Z'
+0057:1130-0075R    [00033]         ST      GR3,MSG2
+0059:              [00034]         OUT     MSG,LNG
+0059:7001-0000                           =>  PUSH 0,GR1
+005B:7002-0000                           =>  PUSH 0,GR2
+005D:1210-006BR                          =>  LAD GR1,MSG
+005F:1220-0067R                          =>  LAD GR2,LNG
+0061:F000-0002                           =>  SVC 2
+0063:7120                                =>  POP GR2
+0064:7110                                =>  POP GR1
+0065:8100          [00035]         RET
+0066:              [00036]  
+0066:0003          [00037]  N      DC      3	; 輪の総数
+0067:000B          [00038]  LNG    DC      11	; メッセージの長さ
+0068:0041          [00039]  A      DC      'A'
+0069:0042          [00040]  B      DC      'B'
+006A:0043          [00041]  C      DC      'C'
+006B:0066          [00042]  MSG    DC      'from '
+006C:0072
+006D:006F
+006E:006D
+006F:0020
+0070:              [00043]  MSG1   DS      1
+0071:0020          [00044]         DC      ' to '
+0072:0074
+0073:006F
+0074:0020
+0075:              [00045]  MSG2   DS      1
+0076:0001                                => $LT00011 DC 1
+0077:              [00046]         END
+_XREF_:
+_XDEF_:
+MAIN:0020R
+_DEF_:
+N:0066R
+A:0068R
+B:0069R
+C:006AR
+HANOI:002BR
+DISP:0055R
+MSG1:0070R
+MSG2:0075R
+MSG:006BR
+LNG:0067R

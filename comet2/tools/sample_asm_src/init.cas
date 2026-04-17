@@ -1,0 +1,7 @@
+INIT    START
+        DC      MAIN
+        DC      SVC1IN
+        DC      SVC2OUT
+        DS      28
+        DC      #EFF0
+        END

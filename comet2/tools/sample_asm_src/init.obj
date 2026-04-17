@@ -1,0 +1,18 @@
+NAME:init
+SIZE:0020
+START:0020R
+
+0020:              [00001]  INIT    START
+0020:MAIN          [00002]          DC      MAIN
+0021:SVC1IN        [00003]          DC      SVC1IN
+0022:SVC2OUT       [00004]          DC      SVC2OUT
+0023:              [00005]          DS      28
+003F:EFF0          [00006]          DC      #EFF0
+0040:              [00007]          END
+_XREF_:
+MAIN
+SVC1IN
+SVC2OUT
+_XDEF_:
+INIT:0020R
+_DEF_:

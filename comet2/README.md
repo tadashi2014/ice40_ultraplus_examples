@@ -92,6 +92,7 @@ program after a visible LED sequence.
 - SPI-loaded firmware is written as 16-bit words in ascending COMET address order
 - the first transmitted 16-bit word becomes COMET memory word `0x0000`
 - the value at `0x001f` is used as the initial `SP`
+- valid RAM-backed stack/data addresses are `0x0000` through `0xefff`
 
 ## SPI IN/OUT echo test
 
