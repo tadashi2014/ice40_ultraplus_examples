@@ -1,6 +1,7 @@
 // `include "../spi/spi_slave.v"
 `include "gpio_mm.v"
 `include "spi_mm.v"
+`include "timer_mm.v"
 `include "uart_mm.v"
 `include "comet2_cpu/comet2_cpu.v"
 `include "comet2_cpu/comet2_memory.v"
@@ -58,6 +59,15 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B,
    reg [31:0] uart_wr_addr;
    reg [31:0] uart_wr_data;
 
+   reg timer_reset = 0;
+   reg timer_rd_req;
+   reg [31:0] timer_rd_addr;
+   wire [31:0] timer_rd_data;
+   wire timer_rd_valid;
+   reg timer_wr_req;
+   reg [31:0] timer_wr_addr;
+   reg [31:0] timer_wr_data;
+
    wire memory_reset;
    assign memory_reset = 0;
    reg memory_rd_req;
@@ -79,6 +89,8 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B,
    wire comet_write_mmio_gpio = (cpu_write_addr[15:8] == 8'hF1);
    wire comet_mmio_uart = (cpu_read_addr[15:8] == 8'hF2);
    wire comet_write_mmio_uart = (cpu_write_addr[15:8] == 8'hF2);
+   wire comet_mmio_timer = (cpu_read_addr[15:8] == 8'hF3);
+   wire comet_write_mmio_timer = (cpu_write_addr[15:8] == 8'hF3);
    wire gpio_led_r;
    wire gpio_led_g;
    wire gpio_led_b;
@@ -96,6 +108,12 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B,
       .uart_rx(UART_RX), .uart_tx(UART_TX),
       .rd_req(uart_rd_req), .rd_addr(uart_rd_addr), .rd_data(uart_rd_data), .data_valid(uart_rd_valid),
       .wr_req(uart_wr_req), .wr_addr(uart_wr_addr), .wr_data(uart_wr_data)
+   );
+
+   timer_mm timer_mm_inst(
+      .clk(clk), .reset(timer_reset),
+      .rd_req(timer_rd_req), .rd_addr(timer_rd_addr), .rd_data(timer_rd_data), .data_valid(timer_rd_valid),
+      .wr_req(timer_wr_req), .wr_addr(timer_wr_addr), .wr_data(timer_wr_data)
    );
 
    comet2_cpu comet2_cpu_inst(.clk(clk), .reset(cpu_reset),
@@ -172,6 +190,11 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B,
       uart_wr_req = 0;
       uart_wr_addr = 0;
       uart_wr_data = 0;
+      timer_rd_req = 0;
+      timer_rd_addr = 0;
+      timer_wr_req = 0;
+      timer_wr_addr = 0;
+      timer_wr_data = 0;
 
       counter_firmware_address = 0;
       firmware_data_buf = 0;
@@ -197,6 +220,11 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B,
       uart_wr_req <= 0;
       uart_wr_addr <= 0;
       uart_wr_data <= 0;
+      timer_rd_req <= 0;
+      timer_rd_addr <= 0;
+      timer_wr_req <= 0;
+      timer_wr_addr <= 0;
+      timer_wr_data <= 0;
 
       cpu_read_data <= 0;
       cpu_read_data_valid <= 0;
@@ -306,6 +334,18 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B,
                uart_rd_addr <= 32'hC;
             end
          end
+         if(comet_mmio_timer) begin
+            timer_rd_req <= 1;
+            case (cpu_read_addr[3:0])
+            4'h0: timer_rd_addr <= 32'h0;
+            4'h1: timer_rd_addr <= 32'h4;
+            4'h2: timer_rd_addr <= 32'h8;
+            4'h3: timer_rd_addr <= 32'hC;
+            4'h4: timer_rd_addr <= 32'h10;
+            4'h5: timer_rd_addr <= 32'h14;
+            default: timer_rd_addr <= 32'h0;
+            endcase
+         end
 
       end
 
@@ -325,6 +365,10 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B,
       end
       if(uart_rd_valid == 1) begin
          cpu_read_data <= {16'b0, uart_rd_data[15:0]};
+         cpu_read_data_valid <= 1;
+      end
+      if(timer_rd_valid == 1) begin
+         cpu_read_data <= {16'b0, timer_rd_data[15:0]};
          cpu_read_data_valid <= 1;
       end
 
@@ -363,6 +407,37 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B,
                uart_wr_addr <= 32'hC;
                uart_wr_data <= {31'b0, cpu_write_data[0]};
             end
+         end
+         if(comet_write_mmio_timer) begin
+            case (cpu_write_addr[3:0])
+            4'h1: begin
+               timer_wr_req <= 1;
+               timer_wr_addr <= 32'h4;
+               timer_wr_data <= {16'b0, cpu_write_data[15:0]};
+            end
+            4'h2: begin
+               timer_wr_req <= 1;
+               timer_wr_addr <= 32'h8;
+               timer_wr_data <= {16'b0, cpu_write_data[15:0]};
+            end
+            4'h3: begin
+               timer_wr_req <= 1;
+               timer_wr_addr <= 32'h4;
+               timer_wr_data <= {cpu_write_data[15:0], 16'b0};
+            end
+            4'h4: begin
+               timer_wr_req <= 1;
+               timer_wr_addr <= 32'h8;
+               timer_wr_data <= {cpu_write_data[15:0], 16'b0};
+            end
+            4'h5: begin
+               timer_wr_req <= 1;
+               timer_wr_addr <= 32'h14;
+               timer_wr_data <= {16'b0, cpu_write_data[15:0]};
+            end
+            default: begin
+            end
+            endcase
          end
 
       end

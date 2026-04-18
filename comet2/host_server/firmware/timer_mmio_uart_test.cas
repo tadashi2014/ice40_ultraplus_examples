@@ -1,0 +1,51 @@
+; Timer MMIO + UART MMIO test for default comet2 top.
+; Programs the polling timer for ~1 second, waits until it fires,
+; then transmits "TICK\r\n" over UART and repeats forever.
+
+MAIN    START
+
+LOOP    LD      GR1,CMPLO
+        ST      GR1,#F302
+        LD      GR1,CMPHI
+        ST      GR1,#F304
+        LD      GR1,CTLINI
+        ST      GR1,#F305
+        LD      GR1,CTLSTA
+        ST      GR1,#F305
+
+WAIT    LD      GR2,#F300
+        AND     GR2,FIRED
+        JZE     WAIT
+
+        LAD     GR1,MSG
+        LD      GR2,LEN
+
+SEND    LD      GR3,#F200
+        AND     GR3,TXBUSY
+        JNZ     SEND
+        LD      GR3,0,GR1
+        ST      GR3,#F202
+        LAD     GR1,1,GR1
+        SUBA    GR2,ONE
+        JNZ     SEND
+        JUMP    LOOP
+
+SVC1IN  START
+        RET
+
+SVC2OUT START
+        RET
+
+ONE      DC     1
+FIRED    DC     4
+TXBUSY   DC     2
+CMPLO    DC     #1B00
+CMPHI    DC     #00B7
+CTLSTA   DC     1
+CTLINI   DC     #000C
+LEN      DC     6
+MSG      DC     'TICK'
+         DC     #000D
+         DC     #000A
+
+         END

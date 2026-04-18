@@ -78,6 +78,8 @@ The COMET II implementation uses 16-bit word addresses.
 Main memory : 0x0000 - 0xefff
 SPI MMIO    : 0xf000 - 0xf0ff
 GPIO MMIO   : 0xf100 - 0xf1ff
+UART MMIO   : 0xf200 - 0xf2ff
+Timer MMIO  : 0xf300 - 0xf3ff
 ```
 
 ## Low memory usage
@@ -206,4 +208,37 @@ cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/h
 python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
 python3 ../asm_tools/casl2_asm/casl2.py -x uart_rx_mmio_echo.cas
 python3 ../asm_tools/obj2bin.py --no-runtime init.obj uart_rx_mmio_echo.obj -o uart_rx_mmio_echo.bin
+```
+
+## Timer MMIO
+
+In the default `top.v` build, a polling timer is mapped at `0xF300`-`0xF305`.
+
+- `0xF300`: status
+  `bit0=enable`, `bit1=periodic`, `bit2=fired`
+- `0xF301`: current counter low 16 bits
+- `0xF302`: compare value low 16 bits
+- `0xF303`: current counter high 16 bits
+- `0xF304`: compare value high 16 bits
+- `0xF305`: control
+  `bit0=enable`, `bit1=periodic`, `bit2=clear fired`, `bit3=clear counter`
+
+Typical one-shot flow:
+
+1. write compare value to `0xF302`
+2. write `0x000C` to `0xF305` to clear `fired` and reset the counter
+3. write `0x0001` to `0xF305` to start the timer
+4. poll `0xF300` until `bit2` becomes `1`
+
+This timer does not generate CPU interrupts yet. It is intended for busy-wait
+or periodic polling from COMET II software.
+
+A simple UART-backed timer polling sample is in
+[`host_server/firmware/timer_mmio_uart_test.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/timer_mmio_uart_test.cas).
+It programs the timer for about 1 second, waits for `fired`, prints `TICK`,
+and repeats forever.
+
+```sh
+cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+make timer_mmio_uart_test.bin
 ```

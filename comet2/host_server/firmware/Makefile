@@ -8,7 +8,8 @@ ALL_BINS = \
 	uart_echo.bin \
 	uart_tx_test.bin \
 	uart_tx_mmio_test.bin \
-	uart_rx_mmio_echo.bin
+	uart_rx_mmio_echo.bin \
+	timer_mmio_uart_test.bin
 
 all: $(ALL_BINS)
 
@@ -33,6 +34,9 @@ uart_tx_mmio_test.obj: uart_tx_mmio_test.cas
 uart_rx_mmio_echo.obj: uart_rx_mmio_echo.cas
 	$(PYTHON) $(ASM) -x uart_rx_mmio_echo.cas
 
+timer_mmio_uart_test.obj: timer_mmio_uart_test.cas
+	$(PYTHON) $(ASM) -x timer_mmio_uart_test.cas
+
 hanoi.bin: init.obj hanoi.obj inout_uart.obj
 	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj hanoi.obj inout_uart.obj -o hanoi.bin
 
@@ -47,6 +51,9 @@ uart_tx_mmio_test.bin: init.obj uart_tx_mmio_test.obj
 
 uart_rx_mmio_echo.bin: init.obj uart_rx_mmio_echo.obj
 	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj uart_rx_mmio_echo.obj -o uart_rx_mmio_echo.bin
+
+timer_mmio_uart_test.bin: init.obj timer_mmio_uart_test.obj
+	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj timer_mmio_uart_test.obj -o timer_mmio_uart_test.bin
 
 clean:
 	rm -f *.obj *.exe *.bin *.words.txt
