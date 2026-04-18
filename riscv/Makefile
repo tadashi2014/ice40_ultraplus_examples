@@ -12,6 +12,12 @@ else
 $(error CPU must be "picorv32" or "simple")
 endif
 
+ifeq ($(CPU),simple)
+selected_pcf = top_uart.pcf
+else
+selected_pcf = $(pcf_file)
+endif
+
 yosys_cpu = yosys $(cpu_define)
 
 # ---- Production build (requires SPI firmware load to start CPU) ----
@@ -19,7 +25,7 @@ yosys_cpu = yosys $(cpu_define)
 # Example: make CPU=simple build
 build:
 	$(yosys_cpu) -p "synth_ice40 -top top -json $(filename).json -blif $(filename).blif" $(filename).v $(cpu_extra_srcs)
-	nextpnr-ice40 --up5k --json $(filename).json --pcf $(pcf_file) --asc $(filename).asc
+	nextpnr-ice40 --up5k --json $(filename).json --pcf $(selected_pcf) --asc $(filename).asc
 	icepack $(filename).asc $(filename).bin
 
 prog:
@@ -39,12 +45,10 @@ prog_flash:
 #   0-2 s : Blue ON
 #   2 s+  : Blue OFF; firmware/debug behaviour depends on loaded memory
 debug:
-	$(yosys_cpu) -p "synth_ice40 -top top -json top_timer_debug.json -blif top_timer_debug.blif" top_timer_debug.v $(cpu_extra_srcs)
-	nextpnr-ice40 --up5k --json top_timer_debug.json --pcf $(pcf_file) --asc top_timer_debug.asc
-	icepack top_timer_debug.asc top_timer_debug.bin
+	$(MAKE) -C tests timer_debug CPU=$(CPU)
 
 prog_debug:
-	iceprog -S top_timer_debug.bin
+	$(MAKE) -C tests prog_timer_debug
 
 # ---- Blink test: no CPU, no SPI, no firmware needed ----
 # Use this first to confirm the FPGA is being programmed correctly.
@@ -52,12 +56,10 @@ prog_debug:
 # If LEDs blink -> FPGA programming OK, problem is in CPU/firmware/SPI.
 # If LEDs do NOT blink -> check iceprog connection / FPGA power.
 blink:
-	yosys -p "synth_ice40 -top top -json top_blink.json" top_blink.v
-	nextpnr-ice40 --up5k --json top_blink.json --pcf $(pcf_file) --asc top_blink.asc
-	icepack top_blink.asc top_blink.bin
+	$(MAKE) -C tests blink
 
 prog_blink:
-	iceprog -S top_blink.bin
+	$(MAKE) -C tests prog_blink
 
 # ---- SPI debug build: SPI required to start CPU; LED_B=waiting, LED_G=error, LED_R=firmware ----
 # Step 4 in the debug progression.  Load firmware with host_server/./host.
@@ -67,12 +69,10 @@ prog_blink:
 #   LED_B OFF + LED_G ON  : CPU started but selected CPU reported an error/trap ✗
 #   LED_B stays ON        : host never sent SPI_START_CPU (SPI path problem) ✗
 spi_debug:
-	$(yosys_cpu) -p "synth_ice40 -top top -json top_spi_debug.json -blif top_spi_debug.blif" top_spi_debug.v $(cpu_extra_srcs)
-	nextpnr-ice40 --up5k --json top_spi_debug.json --pcf $(pcf_file) --asc top_spi_debug.asc
-	icepack top_spi_debug.asc top_spi_debug.bin
+	$(MAKE) -C tests spi_debug CPU=$(CPU)
 
 prog_spi_debug:
-	iceprog -S top_spi_debug.bin
+	$(MAKE) -C tests prog_spi_debug
 
 # ---- Self-test build: 5-instruction ROM embedded in bitstream, no SPI needed ----
 # Firmware (embedded ROM):
@@ -88,16 +88,11 @@ prog_spi_debug:
 #   LED_G ON : selected CPU reported an error/trap (ROM encoding bug, should not happen).
 #   LED_R OFF + LED_G OFF : CPU is not starting (check power-on reset logic).
 selftest:
-	$(yosys_cpu) -p "synth_ice40 -top top -json top_selftest.json" top_selftest.v $(cpu_extra_srcs)
-	nextpnr-ice40 --up5k --json top_selftest.json --pcf $(pcf_file) --asc top_selftest.asc
-	icepack top_selftest.asc top_selftest.bin
+	$(MAKE) -C tests selftest CPU=$(CPU)
 
 prog_selftest:
-	iceprog -S top_selftest.bin
+	$(MAKE) -C tests prog_selftest
 
 clean:
-	rm -rf $(filename).json $(filename).blif $(filename).asc $(filename).bin \
-	       top_timer_debug.json top_timer_debug.blif top_timer_debug.asc top_timer_debug.bin \
-	       top_blink.json top_blink.asc top_blink.bin \
-	       top_selftest.json top_selftest.blif top_selftest.asc top_selftest.bin \
-	       top_spi_debug.json top_spi_debug.blif top_spi_debug.asc top_spi_debug.bin
+	rm -rf $(filename).json $(filename).blif $(filename).asc $(filename).bin
+	$(MAKE) -C tests clean

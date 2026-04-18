@@ -1,15 +1,10 @@
 // `include "../spi/spi_slave.v"
-`include "gpio_mm.v"
-`include "memory.v"
-`include "spi_mm.v"
-`ifdef CPU_SIMPLE
-`include "uart_mm.v"
-`include "simple_riscv_cpu/simple_cpu/simple_cpu.v"
-`else
-`include "picorv32/picorv32_simple_cpu.v"
-`endif
+`include "../gpio_mm.v"
+`include "../spi_mm.v"
+`include "../comet2_cpu/comet2_cpu.v"
+`include "../comet2_cpu/comet2_memory.v"
 
-module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, input SPI_SCK, input SPI_SS, input SPI_MOSI, output SPI_MISO`ifdef CPU_SIMPLE, input UART_RX, output UART_TX`endif);
+module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, input SPI_SCK, input SPI_SS, input SPI_MOSI, output SPI_MISO);
 
    (* syn_maxfan = 40 *) reg cpu_reset = 1;
    wire cpu_read_req;
@@ -62,17 +57,14 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    reg [31:0] memory_wr_data;
    reg [3:0] memory_wr_mask;
 
-`ifdef CPU_SIMPLE
-   wire uart_reset;
-   assign uart_reset = 0;
-   reg uart_rd_req;
-   reg [31:0] uart_rd_addr;
-   wire [31:0] uart_rd_data;
-   wire uart_rd_valid;
-   reg uart_wr_req;
-   reg [31:0] uart_wr_addr;
-   reg [31:0] uart_wr_data;
-`endif
+   reg [15:0] comet_spi_write_lo;
+   reg comet_spi_read_hi;
+   wire comet_main_mem = (cpu_read_addr[15:12] != 4'hF);
+   wire comet_write_main_mem = (cpu_write_addr[15:12] != 4'hF);
+   wire comet_mmio_spi = (cpu_read_addr[15:8] == 8'hF0);
+   wire comet_write_mmio_spi = (cpu_write_addr[15:8] == 8'hF0);
+   wire comet_mmio_gpio = (cpu_read_addr[15:8] == 8'hF1);
+   wire comet_write_mmio_gpio = (cpu_write_addr[15:8] == 8'hF1);
 
    spi_mm spi_mm_inst(.clk(clk), .reset(spi_reset),
       .SPI_SCK(SPI_SCK), .SPI_SS(SPI_SS), .SPI_MOSI(SPI_MOSI), .SPI_MISO(SPI_MISO),
@@ -83,7 +75,7 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       .cpu_init(spi_cpu_init), .cpu_init_ack(spi_cpu_init_ack)
    );
 
-   simple_cpu simple_cpu_inst(.clk(clk), .reset(cpu_reset),
+   comet2_cpu comet2_cpu_inst(.clk(clk), .reset(cpu_reset),
       .read_req(cpu_read_req), .read_addr(cpu_read_addr), .read_data(cpu_read_data), .read_data_valid(cpu_read_data_valid),
       .write_req(cpu_write_req), .write_addr(cpu_write_addr), .write_data(cpu_write_data), .memory_mask(cpu_memory_mask),
       .error_instruction(cpu_error_instruction), .debug(cpu_debug)
@@ -95,18 +87,14 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       .wr_req(gpio_wr_req), .wr_addr(gpio_wr_addr), .wr_data(gpio_wr_data)
    );
 
-   memory memory_inst(.clk(clk), .reset(memory_reset),
-      .rd_req(memory_rd_req), .rd_addr(memory_rd_addr[14:0]), .rd_data(memory_rd_data), .data_valid(memory_rd_valid),
-      .wr_req(memory_wr_req), .wr_addr(memory_wr_addr[14:0]), .wr_data(memory_wr_data), .wr_mask(memory_wr_mask)
+   wire [15:0] comet_memory_rd_data;
+   wire comet_memory_rd_valid;
+   comet2_memory comet2_memory_inst(.clk(clk), .reset(memory_reset),
+      .rd_req(memory_rd_req), .rd_addr(memory_rd_addr[15:0]), .rd_data(comet_memory_rd_data), .data_valid(comet_memory_rd_valid),
+      .wr_req(memory_wr_req), .wr_addr(memory_wr_addr[15:0]), .wr_data(memory_wr_data[15:0])
    );
-
-`ifdef CPU_SIMPLE
-   uart_mm #(.CLK_HZ(12000000), .BAUD(115200), .FIFO_DEPTH(16)) uart_mm_inst(.clk(clk), .reset(uart_reset),
-      .uart_rx(UART_RX), .uart_tx(UART_TX),
-      .rd_req(uart_rd_req), .rd_addr(uart_rd_addr), .rd_data(uart_rd_data), .data_valid(uart_rd_valid),
-      .wr_req(uart_wr_req), .wr_addr(uart_wr_addr), .wr_data(uart_wr_data)
-   );
-`endif
+   assign memory_rd_data = {16'b0, comet_memory_rd_data};
+   assign memory_rd_valid = comet_memory_rd_valid;
 
    //register file investigation
    reg [31:0] state;
@@ -149,16 +137,11 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       memory_wr_mask = 4'b1111;
       gpio_rd_req = 0;
       gpio_rd_addr = 0;
-`ifdef CPU_SIMPLE
-      uart_rd_req = 0;
-      uart_rd_addr = 0;
-      uart_wr_req = 0;
-      uart_wr_addr = 0;
-      uart_wr_data = 0;
-`endif
 
       counter_firmware_address = 0;
       firmware_data_buf = 0;
+      comet_spi_write_lo = 0;
+      comet_spi_read_hi = 0;
       cpu_read_req_buf = 0;
    end
 
@@ -174,13 +157,6 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       gpio_wr_data <= 0;
       gpio_rd_req <= 0;
       gpio_rd_addr <= 0;
-`ifdef CPU_SIMPLE
-      uart_wr_req <= 0;
-      uart_wr_addr <= 0;
-      uart_wr_data <= 0;
-      uart_rd_req <= 0;
-      uart_rd_addr <= 0;
-`endif
 
       cpu_read_data <= 0;
       cpu_read_data_valid <= 0;
@@ -220,14 +196,9 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
          end
       end
       WRITE_MEMORY: begin
-         if(counter_firmware_address[0] == 0) begin
-            firmware_data_buf <= spi_firm_data[15:0];
-         end else begin
-            memory_wr_data <= {spi_firm_data[15:0], firmware_data_buf};
-            memory_wr_mask <= 4'b1111;
-            memory_wr_req <= 1;
-            memory_wr_addr <= {counter_firmware_address[13:1], 2'b00};
-         end
+         memory_wr_data <= {16'b0, spi_firm_data[15:0]};
+         memory_wr_req <= 1;
+         memory_wr_addr <= {16'b0, counter_firmware_address};
 
          counter_firmware_address <= counter_firmware_address + 1;
          // Release spi_mm.firm_wr after every accepted 16-bit firmware word.
@@ -259,27 +230,30 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       // cpu makes a read request
       if(cpu_read_req_buf == 0 && cpu_read_req == 1) begin //only rising edge
 
-         //memory
-         if(cpu_read_addr[31:15] == 17'h0 ) begin //0x0000 - 0x7fff
+         if(comet_main_mem) begin
             memory_rd_req <= 1;
-            memory_rd_addr <= cpu_read_addr[14:0];
+            memory_rd_addr <= cpu_read_addr;
          end
-         //SPI
-         if(cpu_read_addr[31:8] == 24'h000080 ) begin //0x8000 - 0x80ff
+         if(comet_mmio_spi) begin
             spi_rd_req <= 1;
-            spi_rd_addr <= cpu_read_addr[7:0];
+            if(cpu_read_addr[3:0] == 4'h0) begin
+               spi_rd_addr <= 32'h0;
+               comet_spi_read_hi <= 1'b0;
+            end else if(cpu_read_addr[3:0] == 4'h1 || cpu_read_addr[3:0] == 4'h2) begin
+               spi_rd_addr <= 32'h4;
+               comet_spi_read_hi <= cpu_read_addr[3:0] == 4'h2;
+            end else if(cpu_read_addr[3:0] == 4'h3) begin
+               spi_rd_addr <= 32'h8;
+               comet_spi_read_hi <= 1'b0;
+            end else begin
+               spi_rd_addr <= 32'hC;
+               comet_spi_read_hi <= 1'b0;
+            end
          end
-         //gpio
-         if(cpu_read_addr[31:8] == 24'h000081) begin //0x8100 - 0x81ff
+         if(comet_mmio_gpio) begin
             gpio_rd_req <= 1;
-            gpio_rd_addr <= cpu_read_addr[7:0];
+            gpio_rd_addr <= 0;
          end
-`ifdef CPU_SIMPLE
-         if(cpu_read_addr[31:8] == 24'h000082) begin //0x8200 - 0x82ff
-            uart_rd_req <= 1;
-            uart_rd_addr <= cpu_read_addr[7:0];
-         end
-`endif
 
       end
 
@@ -289,49 +263,40 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       end
 
       if(spi_rd_valid == 1) begin
-         cpu_read_data <= spi_rd_data;
+         cpu_read_data <= comet_spi_read_hi ? {16'b0, spi_rd_data[31:16]} : {16'b0, spi_rd_data[15:0]};
          cpu_read_data_valid <= 1;
       end
 
       if(gpio_rd_valid == 1) begin
-         cpu_read_data <= gpio_rd_data;
+         cpu_read_data <= {16'b0, gpio_rd_data[15:0]};
          cpu_read_data_valid <= 1;
       end
-`ifdef CPU_SIMPLE
-      if(uart_rd_valid == 1) begin
-         cpu_read_data <= uart_rd_data;
-         cpu_read_data_valid <= 1;
-      end
-`endif
 
       //cpu makes a write request
       if(cpu_write_req == 1) begin
-         //memory
-         if(cpu_write_addr[31:15] == 17'h0 ) begin
+         if(comet_write_main_mem) begin
             memory_wr_req <= 1;
-            memory_wr_addr <= cpu_write_addr[14:0];
-            memory_wr_data <= cpu_write_data;
-            memory_wr_mask <= cpu_memory_mask;
+            memory_wr_addr <= cpu_write_addr;
+            memory_wr_data <= {16'b0, cpu_write_data[15:0]};
          end
-         //SPI
-         if(cpu_write_addr[31:8] == 24'h000080 ) begin
-            spi_wr_req <= 1;
-            spi_wr_addr <= cpu_write_addr[7:0];
-            spi_wr_data <= cpu_write_data;
+         if(comet_write_mmio_spi) begin
+            if(cpu_write_addr[3:0] == 4'h3) begin
+               spi_wr_req <= 1;
+               spi_wr_addr <= 32'h8;
+               spi_wr_data <= {16'b0, cpu_write_data[15:0]};
+            end else if(cpu_write_addr[3:0] == 4'h4) begin
+               comet_spi_write_lo <= cpu_write_data[15:0];
+            end else if(cpu_write_addr[3:0] == 4'h5) begin
+               spi_wr_req <= 1;
+               spi_wr_addr <= 32'hC;
+               spi_wr_data <= {cpu_write_data[15:0], comet_spi_write_lo};
+            end
          end
-         //gpio
-         if(cpu_write_addr[31:8] == 24'h000081) begin
+         if(comet_write_mmio_gpio) begin
             gpio_wr_req <= 1;
-            gpio_wr_addr <= cpu_write_addr[7:0];
-            gpio_wr_data <= cpu_write_data;
+            gpio_wr_addr <= 0;
+            gpio_wr_data <= {16'b0, cpu_write_data[15:0]};
          end
-`ifdef CPU_SIMPLE
-         if(cpu_write_addr[31:8] == 24'h000082) begin
-            uart_wr_req <= 1;
-            uart_wr_addr <= cpu_write_addr[7:0];
-            uart_wr_data <= cpu_write_data;
-         end
-`endif
 
       end
    end

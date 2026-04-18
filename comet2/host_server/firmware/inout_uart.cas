@@ -1,0 +1,40 @@
+; SVC 1 / SVC 2 implementation backed by UART MMIO.
+;   #F200 : status
+;           bit0=RX ready
+;           bit1=TX busy
+;           bit2=RX overflow
+;   #F201 : RX data (read pops one byte)
+;   #F202 : TX data (write low byte)
+;   #F203 : control bit0=clear RX overflow
+
+SVC1IN  START
+        LD      GR3,#F200
+        AND     GR3,ONE
+        JZE     SVC1IN
+
+        LD      GR3,#F201
+        AND     GR3,MASK8
+        ST      GR3,0,GR1
+        LAD     GR1,1,GR1
+        SUBA    GR2,ONE
+        JNZ     SVC1IN
+        RET
+
+SVC2OUT START
+        LD      GR3,#F200
+        AND     GR3,TWO
+        JNZ     SVC2OUT
+
+        LD      GR3,0,GR1
+        AND     GR3,MASK8
+        ST      GR3,#F202
+        LAD     GR1,1,GR1
+        SUBA    GR2,ONE
+        JNZ     SVC2OUT
+        RET
+
+ONE     DC      1
+TWO     DC      2
+MASK8   DC      #00FF
+
+        END

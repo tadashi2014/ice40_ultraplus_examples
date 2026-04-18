@@ -1,17 +1,47 @@
-// `include "../spi/spi_slave.v"
-`include "gpio_mm.v"
-`include "memory.v"
-`include "spi_mm.v"
+// SPI debug build — Step 4 of the debug progression.
+//
+// Identical to top.v except:
+//   - LED_B ON while cpu_reset=1 (waiting for SPI START_CPU)
+//   - LED_G latches ON if cpu_error_instruction fires after CPU starts
+//   - LED_R follows gpio_mm bit0 (firmware controlled, active-low)
+//
+// Expected behaviour after programming and running host/./host:
+//
+//   While host has NOT yet sent SPI_START_CPU:
+//     LED_B ON  (CPU still in reset)
+//
+//   After SPI_START_CPU arrives:
+//     LED_B OFF
+//     LED_R ON  -> firmware running, GPIO write succeeded  ✓
+//     LED_G ON  -> cpu_error_instruction fired (bad firmware) ✗
+//     All OFF   -> CPU not executing (check spi_slave / spi_mm timing) ✗
+//
+// LED_B stays OFF forever once cpu_reset goes low, so you can distinguish:
+//   "SPI never sent START_CPU" (Blue stays on)   from
+//   "CPU started but firmware broken" (Blue off, Green on).
+//
+// Build and program:
+//   make spi_debug
+//   make prog_spi_debug
+// Then on the host:
+//   cd host_server && ./host
+
+`include "../gpio_mm.v"
+`include "../memory.v"
+`include "../spi_mm.v"
 `ifdef CPU_SIMPLE
-`include "uart_mm.v"
-`include "simple_riscv_cpu/simple_cpu/simple_cpu.v"
+`include "../uart_mm.v"
+`include "../simple_riscv_cpu/simple_cpu/simple_cpu.v"
 `else
-`include "picorv32/picorv32_simple_cpu.v"
+`include "../picorv32/picorv32_simple_cpu.v"
 `endif
 
-module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, input SPI_SCK, input SPI_SS, input SPI_MOSI, output SPI_MISO`ifdef CPU_SIMPLE, input UART_RX, output UART_TX`endif);
+module top(input [3:0] SW, input clk,
+           output LED_R, output LED_G, output LED_B,
+           input SPI_SCK, input SPI_SS, input SPI_MOSI, output SPI_MISO`ifdef CPU_SIMPLE,
+           input UART_RX, output UART_TX`endif);
 
-   (* syn_maxfan = 40 *) reg cpu_reset = 1;
+   reg cpu_reset;
    wire cpu_read_req;
    wire [31:0] cpu_read_addr;
    reg [31:0] cpu_read_data;
@@ -23,7 +53,6 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    wire cpu_error_instruction;
    wire [31:0] cpu_debug;
 
-   //signals for the spi mm
    reg spi_reset = 1;
    reg spi_rd_req;
    reg [31:0] spi_rd_addr;
@@ -40,9 +69,7 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    wire spi_cpu_init;
    reg spi_cpu_init_ack;
 
-   //signals for the gpio_mm
-   wire gpio_reset;
-   assign gpio_reset = 0;
+   reg gpio_reset;
    reg gpio_rd_req;
    reg [31:0] gpio_rd_addr;
    wire [31:0] gpio_rd_data;
@@ -51,8 +78,7 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    reg [31:0] gpio_wr_addr;
    reg [31:0] gpio_wr_data;
 
-   wire memory_reset;
-   assign memory_reset = 0;
+   reg memory_reset;
    reg memory_rd_req;
    reg [31:0] memory_rd_addr;
    wire [31:0] memory_rd_data;
@@ -63,8 +89,7 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    reg [3:0] memory_wr_mask;
 
 `ifdef CPU_SIMPLE
-   wire uart_reset;
-   assign uart_reset = 0;
+   reg uart_reset;
    reg uart_rd_req;
    reg [31:0] uart_rd_addr;
    wire [31:0] uart_rd_data;
@@ -73,6 +98,12 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    reg [31:0] uart_wr_addr;
    reg [31:0] uart_wr_data;
 `endif
+
+   // Debug latches
+   reg cpu_ever_error;
+   reg firmware_loaded;   // latches after the first 32-bit word is written to SPRAM
+
+   wire gpio_led_r, gpio_led_g, gpio_led_b;
 
    spi_mm spi_mm_inst(.clk(clk), .reset(spi_reset),
       .SPI_SCK(SPI_SCK), .SPI_SS(SPI_SS), .SPI_MOSI(SPI_MOSI), .SPI_MISO(SPI_MISO),
@@ -90,7 +121,7 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    );
 
    gpio_mm gpio_mm_inst(.clk(clk), .reset(gpio_reset),
-      .LED_R(LED_R), .LED_G(LED_G), .LED_B(LED_B),
+      .LED_R(gpio_led_r), .LED_G(gpio_led_g), .LED_B(gpio_led_b),
       .rd_req(gpio_rd_req), .rd_addr(gpio_rd_addr), .rd_data(gpio_rd_data), .data_valid(gpio_rd_valid),
       .wr_req(gpio_wr_req), .wr_addr(gpio_wr_addr), .wr_data(gpio_wr_data)
    );
@@ -108,105 +139,76 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
    );
 `endif
 
-   //register file investigation
+   // LED (active-low: signal 0 = ON, signal 1 = OFF):
+   //   Blue   : ON while cpu_reset=1 (no START_CPU yet)
+   //   Red    : ON once firmware has been written to SPRAM (firmware_loaded=1)
+   //   Green  : ON if cpu_error_instruction ever fired (bad opcode from SPRAM)
+   //
+   // Sequence after host/./host:
+   //   Blue         : waiting for firmware / START_CPU
+   //   Purple (R+B) : firmware loaded, CPU not yet started
+   //   Red only     : CPU running correctly  ✓
+   //   Yellow (R+G) : CPU started but hit illegal opcode (SPRAM load problem) ✗
+   assign LED_B = cpu_reset ? 1'b0 : 1'b1;
+   assign LED_R = firmware_loaded ? 1'b0 : 1'b1;
+   assign LED_G = cpu_ever_error ? 1'b0 : 1'b1;
+
    reg [31:0] state;
+   parameter IDLE=0, REQ_READ_SPI_STATUS=2, WRITE_MEMORY=6, START_CPU=9, INIT_CPU=10;
 
-   parameter IDLE=0, INIT=IDLE+1, REQ_READ_SPI_STATUS=INIT+1, READ_SPI_STATUS=REQ_READ_SPI_STATUS+1,
-            REQ_SPI_READ_DATA=READ_SPI_STATUS+1, SPI_READ_DATA=REQ_SPI_READ_DATA+1,
-            WRITE_MEMORY=SPI_READ_DATA+1, READ_REQ_MEMORY=WRITE_MEMORY+1, READ_MEMORY=READ_REQ_MEMORY+1,
-            START_CPU=READ_MEMORY+1, INIT_CPU=START_CPU+1;
-
-   reg [31:0] spi_recv_data_reg;
-   reg handle_data;
-
-   reg [15:0] counter_firmware_address; //address to write firmware to
-   reg [15:0] firmware_data_buf; //since we receive 16bits data and want to write 32, keep buffer
-
-   reg [23:0] reg_bits_inversion;
-
-   reg cpu_read_req_buf; //to detect rising edge
+   reg [15:0] counter_firmware_address;
+   reg [15:0] firmware_data_buf;
+   reg cpu_read_req_buf;
 
    initial begin
-
-      cpu_reset = 1; //cpu in reset at start
-
-      spi_wr_req = 0;
-      spi_wr_data = 0;
-
-      spi_recv_data_reg = 0;
-      spi_firm_ack = 0;
-      spi_cpu_start_ack = 0;
-      spi_cpu_init_ack = 0;
-      handle_data = 0;
-
+      cpu_reset = 1;
+      spi_reset = 1;
+      spi_wr_req = 0; spi_wr_data = 0;
+      spi_firm_ack = 0; spi_cpu_start_ack = 0; spi_cpu_init_ack = 0;
       state = REQ_READ_SPI_STATUS;
-
-      memory_rd_req = 0;
-      memory_rd_addr = 0;
-      memory_wr_req = 0;
-      memory_wr_addr = 0;
-      memory_wr_data = 0;
+      memory_reset = 0;
+      memory_rd_req = 0; memory_rd_addr = 0;
+      memory_wr_req = 0; memory_wr_addr = 0; memory_wr_data = 0;
       memory_wr_mask = 4'b1111;
-      gpio_rd_req = 0;
-      gpio_rd_addr = 0;
+      gpio_reset = 0;
 `ifdef CPU_SIMPLE
-      uart_rd_req = 0;
-      uart_rd_addr = 0;
-      uart_wr_req = 0;
-      uart_wr_addr = 0;
-      uart_wr_data = 0;
+      uart_reset = 0;
 `endif
-
+      gpio_rd_req = 0; gpio_rd_addr = 0;
+`ifdef CPU_SIMPLE
+      uart_rd_req = 0; uart_rd_addr = 0;
+      uart_wr_req = 0; uart_wr_addr = 0; uart_wr_data = 0;
+`endif
       counter_firmware_address = 0;
       firmware_data_buf = 0;
+      cpu_ever_error = 0;
+      firmware_loaded = 0;
       cpu_read_req_buf = 0;
    end
 
    always @(posedge clk)
    begin
       spi_reset <= 0;
-
-      //defaults
       spi_firm_ack <= 0;
-
-      gpio_wr_req <= 0;
-      gpio_wr_addr <= 0;
-      gpio_wr_data <= 0;
-      gpio_rd_req <= 0;
-      gpio_rd_addr <= 0;
+      gpio_rd_req <= 0; gpio_rd_addr <= 0;
+      gpio_wr_req <= 0; gpio_wr_addr <= 0; gpio_wr_data <= 0;
 `ifdef CPU_SIMPLE
-      uart_wr_req <= 0;
-      uart_wr_addr <= 0;
-      uart_wr_data <= 0;
-      uart_rd_req <= 0;
-      uart_rd_addr <= 0;
+      uart_rd_req <= 0; uart_rd_addr <= 0;
+      uart_wr_req <= 0; uart_wr_addr <= 0; uart_wr_data <= 0;
 `endif
-
-      cpu_read_data <= 0;
-      cpu_read_data_valid <= 0;
+      cpu_read_data <= 0; cpu_read_data_valid <= 0;
       cpu_read_req_buf <= cpu_read_req;
-
-      spi_rd_req <= 0;
-      spi_rd_addr <= 0;
-      spi_cpu_start_ack <= 0;
-      spi_cpu_init_ack <= 0;
-
-      spi_wr_req <= 0;
-      spi_wr_addr <= 0;
-      spi_wr_data <= 0;
-
+      spi_rd_req <= 0; spi_rd_addr <= 0;
+      spi_cpu_start_ack <= 0; spi_cpu_init_ack <= 0;
+      spi_wr_req <= 0; spi_wr_addr <= 0; spi_wr_data <= 0;
       memory_rd_req <= 0;
-      memory_wr_req <= 0;
-      memory_wr_addr <= 0;
-      memory_wr_data <= 0;
-      memory_wr_mask <= 4'b1111;
+      memory_wr_req <= 0; memory_wr_addr <= 0; memory_wr_data <= 0; memory_wr_mask <= 4'b1111;
 
-      //handling of SPI messages from host
+      // Error latch (only meaningful after cpu_reset goes low)
+      if(cpu_error_instruction == 1) cpu_ever_error <= 1;
+
+      // SPI state machine (identical to top.v)
       case (state)
-      IDLE: begin
-      end
-      INIT: begin
-      end
       REQ_READ_SPI_STATUS: begin
          if(spi_cpu_init == 1) begin
             spi_cpu_init_ack <= 1;
@@ -227,14 +229,10 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
             memory_wr_mask <= 4'b1111;
             memory_wr_req <= 1;
             memory_wr_addr <= {counter_firmware_address[13:1], 2'b00};
+            firmware_loaded <= 1;   // at least one 32-bit word has been written
          end
-
          counter_firmware_address <= counter_firmware_address + 1;
-         // Release spi_mm.firm_wr after every accepted 16-bit firmware word.
-         // Without this ack, only the first word is ever consumed and the host
-         // keeps retrying because spi_mm still reports the firmware FIFO busy.
          spi_firm_ack <= 1;
-
          state <= REQ_READ_SPI_STATUS;
       end
       START_CPU: begin
@@ -245,54 +243,41 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
          cpu_reset <= 1;
          counter_firmware_address <= 0;
          firmware_data_buf <= 0;
+         firmware_loaded <= 0;   // reset firmware indicator on re-init
          // FIX: 残留 firm_wr を確実にクリアする。
          // 電源投入直後やノイズで firm_wr が 1 になっていた場合、
-         // INIT 後の最初の WRITE_MEMORY が偽パケットを処理し
-         // counter が 1 にずれてしまう。spi_firm_ack を出して
-         // firm_wr を確実に 0 に戻す。
+         // spi_firm_ack を出してクリアしないと INIT 後の最初の
+         // WRITE_MEMORY が偽パケットを処理し counter が 1 にずれる。
+         // counter がずれると全ての firmware バイトが誤アドレスに書かれ
+         // CPU が不正命令を踏む原因になる。
          spi_firm_ack <= 1;
          state <= REQ_READ_SPI_STATUS;
       end
-
       endcase
 
-      // cpu makes a read request
-      if(cpu_read_req_buf == 0 && cpu_read_req == 1) begin //only rising edge
-
-         //memory
-         if(cpu_read_addr[31:15] == 17'h0 ) begin //0x0000 - 0x7fff
+      if(cpu_read_req_buf == 0 && cpu_read_req == 1) begin
+         if(cpu_read_addr[31:15] == 17'h0) begin
             memory_rd_req <= 1;
             memory_rd_addr <= cpu_read_addr[14:0];
          end
-         //SPI
-         if(cpu_read_addr[31:8] == 24'h000080 ) begin //0x8000 - 0x80ff
+         if(cpu_read_addr[31:8] == 24'h000080) begin
             spi_rd_req <= 1;
             spi_rd_addr <= cpu_read_addr[7:0];
          end
-         //gpio
-         if(cpu_read_addr[31:8] == 24'h000081) begin //0x8100 - 0x81ff
+         if(cpu_read_addr[31:8] == 24'h000081) begin
             gpio_rd_req <= 1;
             gpio_rd_addr <= cpu_read_addr[7:0];
          end
-`ifdef CPU_SIMPLE
-         if(cpu_read_addr[31:8] == 24'h000082) begin //0x8200 - 0x82ff
-            uart_rd_req <= 1;
-            uart_rd_addr <= cpu_read_addr[7:0];
-         end
-`endif
-
       end
 
       if(memory_rd_valid == 1) begin
          cpu_read_data <= memory_rd_data;
          cpu_read_data_valid <= 1;
       end
-
       if(spi_rd_valid == 1) begin
          cpu_read_data <= spi_rd_data;
          cpu_read_data_valid <= 1;
       end
-
       if(gpio_rd_valid == 1) begin
          cpu_read_data <= gpio_rd_data;
          cpu_read_data_valid <= 1;
@@ -304,22 +289,18 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
       end
 `endif
 
-      //cpu makes a write request
       if(cpu_write_req == 1) begin
-         //memory
-         if(cpu_write_addr[31:15] == 17'h0 ) begin
+         if(cpu_write_addr[31:15] == 17'h0) begin
             memory_wr_req <= 1;
             memory_wr_addr <= cpu_write_addr[14:0];
             memory_wr_data <= cpu_write_data;
             memory_wr_mask <= cpu_memory_mask;
          end
-         //SPI
-         if(cpu_write_addr[31:8] == 24'h000080 ) begin
+         if(cpu_write_addr[31:8] == 24'h000080) begin
             spi_wr_req <= 1;
             spi_wr_addr <= cpu_write_addr[7:0];
             spi_wr_data <= cpu_write_data;
          end
-         //gpio
          if(cpu_write_addr[31:8] == 24'h000081) begin
             gpio_wr_req <= 1;
             gpio_wr_addr <= cpu_write_addr[7:0];
@@ -332,7 +313,6 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B, 
             uart_wr_data <= cpu_write_data;
          end
 `endif
-
       end
    end
 

@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include "../../spi/spi_host/spi_lib.h"
 
@@ -19,8 +20,28 @@
 #define SPI_POW 0x07
 #define SPI_MATRIX_MULT 0x08
 
-int main()
+int main(int argc, char **argv)
 {
+   const char *firmware_path = "./firmware/main";
+   int load_only = 0;
+
+   for (int i = 1; i < argc; ++i)
+   {
+      if ((strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--firmware") == 0) && (i + 1) < argc)
+      {
+         firmware_path = argv[++i];
+      }
+      else if (strcmp(argv[i], "--load-only") == 0)
+      {
+         load_only = 1;
+      }
+      else
+      {
+         fprintf(stderr, "usage: %s [-f firmware_path] [--load-only]\n", argv[0]);
+         return 1;
+      }
+   }
+
    spi_init();
 
    uint8_t no_param[3] = {0x0, 0x0, 0x0};
@@ -44,10 +65,10 @@ int main()
    uint8_t buffer_read[NB_ELEM_READ];
    FILE *file;
 
-   file = fopen("./firmware/main", "rb");
+   file = fopen(firmware_path, "rb");
    if(file == NULL)
    {
-      printf("error opening the file ./firmware/main\n");
+      printf("error opening the file %s\n", firmware_path);
       exit(1);
    }
    int firmware_read_size = fread(buffer_read, sizeof(uint8_t), NB_ELEM_READ, file);
@@ -82,6 +103,12 @@ int main()
    spi_send(SPI_START_CPU, no_param, &spi_status);
 
    sleep(1);
+
+   if (load_only)
+   {
+      printf("firmware loaded and cpu started (%s)\n", firmware_path);
+      return 0;
+   }
 
    spi_send(SPI_SET_LED, val_led_red, &spi_status);
    printf("sent red color, status: 0x%x\n", spi_status);

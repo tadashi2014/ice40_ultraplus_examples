@@ -1,0 +1,12 @@
+; UART console test for spi_debug build.
+; Receives one byte with SVC 1 and sends it back with SVC 2 forever.
+
+MAIN    START
+LOOP    IN      BUF,LEN
+        OUT     BUF,LEN
+        JUMP    LOOP
+
+BUF     DS      1
+LEN     DC      1
+
+        END

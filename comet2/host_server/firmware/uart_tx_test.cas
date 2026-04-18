@@ -1,0 +1,13 @@
+; UART TX-only test for spi_debug build.
+; Repeatedly sends "HELLO\r\n" through SVC 2.
+
+MAIN    START
+LOOP    OUT     MSG,LEN
+        JUMP    LOOP
+
+LEN     DC      7
+MSG     DC      'HELLO'
+        DC      #000D
+        DC      #000A
+
+        END

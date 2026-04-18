@@ -60,7 +60,8 @@ flowchart LR
 
 ## Repository Layout
 
-- `riscv/`: production top, debug tops, CPU, memory, firmware loader
+- `riscv/`: production top, CPU, memory, firmware loader
+- `riscv/tests/`: blink, timer debug, SPI debug, self-test tops and ROM
 - `riscv/host_server/`: host utility and RISC-V firmware
 - `spi/`: SPI slave and shared FTDI host library
 - `common/`: board constraint file
@@ -127,6 +128,18 @@ make clean blink
 make prog_blink
 ```
 
+### Timer debug
+
+`make timer_debug` は現状 `CPU=simple` の場合のみビルド成功します。
+`CPU=picorv32` では合成は通りますが、配置配線で失敗します。
+
+例:
+
+```sh
+make clean debug CPU=simple
+make prog_debug
+```
+
 ### Self-test
 
 Runs a tiny ROM program embedded in the bitstream, without SPI firmware loading.
@@ -147,6 +160,67 @@ This confirms:
 - decode/execute
 - ROM timing
 - GPIO MMIO
+
+## UART MMIO
+
+The production `top.v` build and `tests/top_spi_debug.v` expose a UART console at `115200 8N1` when built with `CPU=simple`.
+
+`CPU=picorv32` does not support the UART path in this repository. Keep using the previous no-UART configuration for `picorv32`.
+
+- `0x8200`: status (`bit0=RX ready`, `bit1=TX busy`, `bit2=RX overflow`, `bit3=TX FIFO full`)
+- `0x8204`: RX data
+- `0x8208`: TX data
+- `0x820c`: control (`bit0=1` clears RX overflow)
+
+Pins use `UART_TX=12`, `UART_RX=4`.
+
+Available firmware examples:
+
+- `host_server/firmware/uart_tx_test.c`: sends `HELLO\r\n` periodically
+- `host_server/firmware/uart_echo.c`: 1-byte UART echo
+
+Typical flow:
+
+```sh
+cd riscv
+make clean build CPU=simple
+make prog
+```
+
+```sh
+cd host_server/firmware
+make clean
+make PROGRAM=uart_tx_test
+make PROGRAM=uart_echo
+```
+
+```sh
+cd ..
+make clean
+make
+./host -f ./firmware/uart_tx_test --load-only
+```
+
+Expected result:
+
+- `HELLO` repeats on the UART terminal roughly every 5 seconds
+
+Then try echo mode:
+
+```sh
+./host -f ./firmware/uart_echo --load-only
+```
+
+After that, connect a UART terminal at `115200 8N1` and talk to the FPGA over
+`UART_RX/UART_TX`.
+
+Wiring:
+
+- USB-UART `RX` -> FPGA `UART_TX` (`pin 12`)
+- USB-UART `TX` -> FPGA `UART_RX` (`pin 4`)
+- GND common
+
+If you need to isolate the hardware UART path without involving the CPU or SPI loader, `tests/top_uart_tx_test.v` is kept as a pure FPGA-side UART TX test.
 
 ### SPI debug
 
@@ -172,6 +246,7 @@ Expected LED sequence:
 RAM   : 0x0000 - 0x7fff
 SPI   : 0x8000 - 0x80ff
 GPIO  : 0x8100 - 0x81ff
+UART  : 0x8200 - 0x82ff
 ```
 
 ## SPI Commands
@@ -201,11 +276,11 @@ This repository started from the upstream `riscv` sample and adds both portabili
 
 ### New debug infrastructure
 
-- added `top_blink.v`
-- added `top_timer_debug.v`
-- added `top_spi_debug.v`
-- added `top_selftest.v`
-- added `rom.v` for CPU-only ROM self-test
+- moved `top_blink.v` under `tests/`
+- moved `top_timer_debug.v` under `tests/`
+- moved `top_spi_debug.v` under `tests/`
+- moved `top_selftest.v` under `tests/`
+- moved `rom.v` under `tests/` for CPU-only ROM self-test
 - added make targets for `blink`, `debug`, `spi_debug`, and `selftest`
 
 ### Hardware fixes

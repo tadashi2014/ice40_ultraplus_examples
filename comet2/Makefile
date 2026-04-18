@@ -1,10 +1,11 @@
 filename = top
-pcf_file = ../common/io.pcf
 yosys_cmd = yosys
+uart_pcf_file = top_uart.pcf
+spi_pcf_file = ../common/io.pcf
 
 build:
 	$(yosys_cmd) -p "synth_ice40 -top top -json $(filename).json -blif $(filename).blif" $(filename).v
-	nextpnr-ice40 --up5k --json $(filename).json --pcf $(pcf_file) --asc $(filename).asc
+	nextpnr-ice40 --up5k --json $(filename).json --pcf $(uart_pcf_file) --asc $(filename).asc
 	icepack $(filename).asc $(filename).bin
 
 prog:
@@ -13,32 +14,30 @@ prog:
 prog_flash:
 	iceprog $(filename).bin
 
+spi:
+	$(MAKE) -C tests spi
+
+prog_spi:
+	$(MAKE) -C tests prog_spi
+
 debug:
-	$(yosys_cmd) -p "synth_ice40 -top top -json top_timer_debug.json -blif top_timer_debug.blif" top_timer_debug.v
-	nextpnr-ice40 --up5k --json top_timer_debug.json --pcf $(pcf_file) --asc top_timer_debug.asc
-	icepack top_timer_debug.asc top_timer_debug.bin
+	$(MAKE) -C tests timer_debug
 
 prog_debug:
-	iceprog -S top_timer_debug.bin
+	$(MAKE) -C tests prog_timer_debug
 
 spi_debug:
-	$(yosys_cmd) -p "synth_ice40 -top top -json top_spi_debug.json -blif top_spi_debug.blif" top_spi_debug.v
-	nextpnr-ice40 --up5k --json top_spi_debug.json --pcf $(pcf_file) --asc top_spi_debug.asc
-	icepack top_spi_debug.asc top_spi_debug.bin
+	@$(MAKE) build
 
 prog_spi_debug:
-	iceprog -S top_spi_debug.bin
+	@$(MAKE) prog
 
 selftest:
-	$(yosys_cmd) -p "synth_ice40 -top top -json top_selftest.json" top_selftest.v
-	nextpnr-ice40 --up5k --json top_selftest.json --pcf $(pcf_file) --asc top_selftest.asc
-	icepack top_selftest.asc top_selftest.bin
+	$(MAKE) -C tests selftest
 
 prog_selftest:
-	iceprog -S top_selftest.bin
+	$(MAKE) -C tests prog_selftest
 
 clean:
-	rm -rf $(filename).json $(filename).blif $(filename).asc $(filename).bin \
-	       top_timer_debug.json top_timer_debug.blif top_timer_debug.asc top_timer_debug.bin \
-	       top_selftest.json top_selftest.blif top_selftest.asc top_selftest.bin \
-	       top_spi_debug.json top_spi_debug.blif top_spi_debug.asc top_spi_debug.bin
+	rm -rf $(filename).json $(filename).blif $(filename).asc $(filename).bin
+	$(MAKE) -C tests clean

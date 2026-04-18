@@ -1,0 +1,31 @@
+; UART TX-only MMIO direct test for spi_debug build.
+; Sends "HELLO\r\n" by polling #F200 and writing bytes directly to #F202.
+
+MAIN    START
+LOOP    LAD     GR1,MSG
+        LD      GR2,LEN
+
+SEND    LD      GR3,#F200
+        AND     GR3,TXBUSY
+        JNZ     SEND
+        LD      GR3,0,GR1
+        ST      GR3,#F202
+        LAD     GR1,1,GR1
+        SUBA    GR2,ONE
+        JNZ     SEND
+        JUMP    LOOP
+
+SVC1IN  START
+        RET
+
+SVC2OUT START
+        RET
+
+LEN     DC      7
+ONE     DC      1
+TXBUSY  DC      2
+MSG     DC      'HELLO'
+        DC      #000D
+        DC      #000A
+
+        END

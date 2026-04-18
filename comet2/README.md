@@ -8,17 +8,17 @@ independently.
 
 ## Layout
 
-- `top.v`: production COMET II top
-- `top_spi_debug.v`: SPI-oriented debug top
-- `top_timer_debug.v`: timer/debug top
-- `top_selftest.v`: ROM-based self-test top
-- `comet2_selftest_rom.v`: self-test ROM contents
+- `top.v`: default SPI loader + UART console top
+- `tests/`: legacy SPI top, timer debug top, and self-test top/ROM
 - `comet2_cpu/`: COMET II core, 16-bit memory, and CASL/sample support files
-- `host_server/`: host-side SPI echo utility and its paired SPI debug firmware
+- `host_server/`: generic SPI loader for COMET II `.bin`
+- `host_server/asm_tools/`: CASL2 assembler, linker, and obj2bin
+- `host_server/firmware/`: CASL2 sample sources, generated `.bin`, and build `Makefile`
+- `tests/host_server/`: legacy SPI IN/OUT echo utility and paired SPI debug firmware
 
 ## Build
 
-### Production bitstream
+### Default bitstream
 
 ```sh
 cd comet2
@@ -26,6 +26,19 @@ make clean
 make
 make prog
 ```
+
+This now builds the SPI loader + UART console top.
+
+### Legacy SPI-only bitstream
+
+```sh
+cd comet2
+make clean spi
+make prog_spi
+```
+
+The `spi`, `debug`, and `selftest` targets are built from files under
+[`tests/`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/tests).
 
 ### Self-test bitstream
 
@@ -35,14 +48,14 @@ make clean selftest
 make prog_selftest
 ```
 
-### SPI echo test
+### SPI loader / UART console test
 
 ```sh
 cd comet2
 make clean
 make
 make prog
-cd host_server
+cd tests/host_server
 make
 ./comet2_inout_host
 ```
@@ -104,12 +117,93 @@ program after a visible LED sequence.
 - the value at `0x001f` is used as the initial `SP`
 - valid RAM-backed stack/data addresses are `0x0000` through `0xefff`
 
-## SPI IN/OUT echo test
+## SPI firmware loader
 
-The sample program in `host_server/spi_debug_firmware/` uses:
+The default `top.v` bitstream lets the host write a `.bin` image into COMET II RAM and
+then start execution. This build also exposes a UART console at `115200 8N1`.
 
-- `SVC 1` for IN
-- `SVC 2` for OUT
+```sh
+cd host_server
+make
+./comet2_spi_loader -f ./firmware/hanoi.bin
+```
 
-The host utility sends ASCII bytes to the COMET II program and expects them to
-be echoed back over SPI.
+Optional input bytes can be sent through `SVC 1`.
+
+```sh
+cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/tests/host_server
+make
+./comet2_inout_host "HELLO\n"
+```
+
+The host collects bytes produced by `SVC 2` into a 256-byte receive buffer. If
+the program outputs more than that, excess bytes are drained from SPI and
+discarded.
+
+## UART console MMIO
+
+In the default `top.v` build, UART is mapped at `0xF200`-`0xF203`.
+
+- `0xF200`: status
+  `bit0=RX ready`, `bit1=TX busy`, `bit2=RX overflow`, `bit3=TX FIFO full`
+- `0xF201`: RX data, one byte per read
+- `0xF202`: TX data, write low byte to send
+- `0xF203`: control, write bit0=`1` to clear RX overflow
+
+Sample UART-backed SVC handlers are in
+[`host_server/firmware/inout_uart.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/inout_uart.cas).
+A minimal UART echo test program is in
+[`host_server/firmware/uart_echo.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/uart_echo.cas).
+A TX-only UART test program is in
+[`host_server/firmware/uart_tx_test.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/uart_tx_test.cas).
+A direct MMIO TX test program is in
+[`host_server/firmware/uart_tx_mmio_test.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/uart_tx_mmio_test.cas).
+A direct MMIO RX echo test program is in
+[`host_server/firmware/uart_rx_mmio_echo.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/uart_rx_mmio_echo.cas).
+
+`host_server/firmware` では `make` で主要サンプルの `.bin` をまとめて生成できます。
+
+Example build flow:
+
+```sh
+cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+make uart_echo.bin
+```
+
+`hanoi` を UART コンソールで流したい場合は従来どおりこちらです。
+
+```sh
+cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
+python3 ../asm_tools/casl2_asm/casl2.py -x hanoi.cas
+python3 ../asm_tools/casl2_asm/casl2.py -x inout_uart.cas
+python3 ../asm_tools/obj2bin.py --no-runtime init.obj hanoi.obj inout_uart.obj -o hanoi_uart.bin
+```
+
+TX 単体確認ならこちらです。
+
+```sh
+cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
+python3 ../asm_tools/casl2_asm/casl2.py -x uart_tx_test.cas
+python3 ../asm_tools/casl2_asm/casl2.py -x inout_uart.cas
+python3 ../asm_tools/obj2bin.py --no-runtime init.obj uart_tx_test.obj inout_uart.obj -o uart_tx_test.bin
+```
+
+`OUT` / `SVC 2` を通さず UART MMIO を直叩きして切り分けるならこちらです。
+
+```sh
+cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
+python3 ../asm_tools/casl2_asm/casl2.py -x uart_tx_mmio_test.cas
+python3 ../asm_tools/obj2bin.py --no-runtime init.obj uart_tx_mmio_test.obj -o uart_tx_mmio_test.bin
+```
+
+RX も含めて MMIO 直結で echo を確認するならこちらです。
+
+```sh
+cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
+python3 ../asm_tools/casl2_asm/casl2.py -x uart_rx_mmio_echo.cas
+python3 ../asm_tools/obj2bin.py --no-runtime init.obj uart_rx_mmio_echo.obj -o uart_rx_mmio_echo.bin
+```
