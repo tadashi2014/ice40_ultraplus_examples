@@ -57,6 +57,7 @@ parameter ST_SVC_VECTOR_REQ = 8'd13;
 parameter ST_SVC_VECTOR_WAIT= 8'd14;
 parameter ST_SVC0_SP_REQ    = 8'd15;
 parameter ST_SVC0_SP_WAIT   = 8'd16;
+parameter ST_HALT           = 8'd17;
 
 parameter MR_NONE = 4'd0;
 parameter MR_LD   = 4'd1;
@@ -342,6 +343,7 @@ begin : main
    reg [15:0] result;
    reg [16:0] wide;
    reg shifted_out;
+   reg stack_faulted;
 
    if (reset == 1'b1) begin
       read_req <= 1'b0;
@@ -383,6 +385,7 @@ begin : main
       result = 16'h0000;
       wide = 17'h00000;
       shifted_out = 1'b0;
+      stack_faulted = 1'b0;
 
       case (state)
       ST_RESET_PR_REQ: begin
@@ -407,8 +410,13 @@ begin : main
       ST_RESET_SP_WAIT: begin
          read_addr <= bus_addr(16'd31);
          if (read_data_valid == 1'b1) begin
-            sp <= bus_word(read_data);
-            state <= ST_FETCH_REQ;
+            if (bus_word(read_data) > 16'hEFFF) begin
+               error_instruction <= 1'b1;
+               state <= ST_HALT;
+            end else begin
+               sp <= bus_word(read_data);
+               state <= ST_FETCH_REQ;
+            end
          end else begin
             read_req <= 1'b1;
          end
@@ -618,15 +626,24 @@ begin : main
                state <= ST_FETCH_REQ;
             end
             8'h70: begin
-               sp <= sp - 16'd1;
-               effective_addr <= sp - 16'd1;
-               write_word <= indexed_addr(operand, x);
-               mem_write_kind <= MW_PUSH;
-               state <= ST_MEM_WRITE;
+               result = sp - 16'd1;
+               if (result > 16'hEFFF) begin
+                  error_instruction <= 1'b1;
+                  state <= ST_HALT;
+               end else begin
+                  sp <= result;
+                  effective_addr <= result;
+                  write_word <= indexed_addr(operand, x);
+                  mem_write_kind <= MW_PUSH;
+                  state <= ST_MEM_WRITE;
+               end
             end
             8'h71: begin
                if (r > 4'd7) begin
                   fault_instruction();
+               end else if (sp > 16'hEFFF) begin
+                  error_instruction <= 1'b1;
+                  state <= ST_HALT;
                end else begin
                   effective_addr <= sp;
                   dest_reg <= r;
@@ -635,16 +652,27 @@ begin : main
                end
             end
             8'h80: begin
-               sp <= sp - 16'd1;
-               effective_addr <= sp - 16'd1;
-               write_word <= pr;
-               mem_write_kind <= MW_CALL;
-               state <= ST_MEM_WRITE;
+               result = sp - 16'd1;
+               if (result > 16'hEFFF) begin
+                  error_instruction <= 1'b1;
+                  state <= ST_HALT;
+               end else begin
+                  sp <= result;
+                  effective_addr <= result;
+                  write_word <= pr;
+                  mem_write_kind <= MW_CALL;
+                  state <= ST_MEM_WRITE;
+               end
             end
             8'h81: begin
-               effective_addr <= sp;
-               mem_read_kind <= MR_RET;
-               state <= ST_MEM_READ_REQ;
+               if (sp > 16'hEFFF) begin
+                  error_instruction <= 1'b1;
+                  state <= ST_HALT;
+               end else begin
+                  effective_addr <= sp;
+                  mem_read_kind <= MR_RET;
+                  state <= ST_MEM_READ_REQ;
+               end
             end
             8'hF0: begin
                result = indexed_addr(operand, x);
@@ -653,13 +681,19 @@ begin : main
                   mem_read_kind <= MR_SVC;
                   state <= ST_MEM_READ_REQ;
                end else begin
-                  sp <= sp - 16'd1;
-                  effective_addr <= sp - 16'd1;
-                  svc_vector_addr <= {8'h00, result[7:0]};
-                  write_word <= pr;
-                  mem_read_kind <= MR_SVC;
-                  mem_write_kind <= MW_SVC;
-                  state <= ST_MEM_WRITE;
+                  rhs = sp - 16'd1;
+                  if (rhs > 16'hEFFF) begin
+                     error_instruction <= 1'b1;
+                     state <= ST_HALT;
+                  end else begin
+                     sp <= rhs;
+                     effective_addr <= rhs;
+                     svc_vector_addr <= {8'h00, result[7:0]};
+                     write_word <= pr;
+                     mem_read_kind <= MR_SVC;
+                     mem_write_kind <= MW_SVC;
+                     state <= ST_MEM_WRITE;
+                  end
                end
             end
             default: begin
@@ -727,11 +761,25 @@ begin : main
             end
             MR_POP: begin
                gr[dest_reg] <= rhs;
-               sp <= sp + 16'd1;
+               result = sp + 16'd1;
+               if (result > 16'hEFFF) begin
+                  error_instruction <= 1'b1;
+                  state <= ST_HALT;
+                  stack_faulted = 1'b1;
+               end else begin
+                  sp <= result;
+               end
             end
             MR_RET: begin
                pr <= rhs;
-               sp <= sp + 16'd1;
+               result = sp + 16'd1;
+               if (result > 16'hEFFF) begin
+                  error_instruction <= 1'b1;
+                  state <= ST_HALT;
+                  stack_faulted = 1'b1;
+               end else begin
+                  sp <= result;
+               end
             end
             MR_SVC: begin
                pr <= rhs;
@@ -743,7 +791,7 @@ begin : main
                error_instruction <= 1'b1;
             end
             endcase
-            if (!((mem_read_kind == MR_SVC) && (effective_addr == 16'h0000))) begin
+            if (!stack_faulted && !((mem_read_kind == MR_SVC) && (effective_addr == 16'h0000))) begin
                state <= ST_FETCH_REQ;
             end
          end else begin
@@ -786,11 +834,18 @@ begin : main
       ST_SVC0_SP_WAIT: begin
          read_addr <= bus_addr(16'd31);
          if (read_data_valid == 1'b1) begin
-            sp <= bus_word(read_data);
-            state <= ST_FETCH_REQ;
+            if (bus_word(read_data) > 16'hEFFF) begin
+               error_instruction <= 1'b1;
+               state <= ST_HALT;
+            end else begin
+               sp <= bus_word(read_data);
+               state <= ST_FETCH_REQ;
+            end
          end else begin
             read_req <= 1'b1;
          end
+      end
+      ST_HALT: begin
       end
       default: begin
          error_instruction <= 1'b1;
