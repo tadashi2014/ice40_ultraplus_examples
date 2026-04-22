@@ -627,7 +627,7 @@ begin : main
             end
             8'h70: begin
                result = sp - 16'd1;
-               if (result > 16'hEFFF) begin
+               if ((sp > 16'hEFFF) || (result > 16'hEFFF)) begin
                   error_instruction <= 1'b1;
                   state <= ST_HALT;
                end else begin
@@ -653,7 +653,7 @@ begin : main
             end
             8'h80: begin
                result = sp - 16'd1;
-               if (result > 16'hEFFF) begin
+               if ((sp > 16'hEFFF) || (result > 16'hEFFF)) begin
                   error_instruction <= 1'b1;
                   state <= ST_HALT;
                end else begin
@@ -682,7 +682,7 @@ begin : main
                   state <= ST_MEM_READ_REQ;
                end else begin
                   rhs = sp - 16'd1;
-                  if (rhs > 16'hEFFF) begin
+                  if ((sp > 16'hEFFF) || (rhs > 16'hEFFF)) begin
                      error_instruction <= 1'b1;
                      state <= ST_HALT;
                   end else begin
