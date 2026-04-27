@@ -1,0 +1,5 @@
+MAIN     START
+         LD GR0,=2
+         ST GR0,#F100
+         RET
+         END
