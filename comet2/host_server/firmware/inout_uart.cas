@@ -6,35 +6,43 @@
 ;   #F201 : RX data (read pops one byte)
 ;   #F202 : TX data (write low byte)
 ;   #F203 : control bit0=clear RX overflow
+;
+; Macro compatibility:
+;   Standard CASL2 IN/OUT macros pass
+;     GR1 = buffer address
+;     GR2 = length-word address
+;   so both handlers must first load the actual count from 0,GR2.
 
 SVC1IN  START
-        LD      GR3,#F200
+        LD      GR2,0,GR2
+SVC1LP  LD      GR3,#F200
         AND     GR3,ONE
-        JZE     SVC1IN
+        JZE     SVC1LP
 
         LD      GR3,#F201
         AND     GR3,MASK8
         ST      GR3,0,GR1
         LAD     GR1,1,GR1
         SUBA    GR2,ONE
-        JNZ     SVC1IN
+        JNZ     SVC1LP
         RET
 
 SVC2OUT START
-        LD      GR3,#F200
-        AND     GR3,TWO
-        JNZ     SVC2OUT
+        LD      GR2,0,GR2
+SVC2LP  LD      GR3,#F200
+        AND     GR3,TXBUSY
+        JNZ     SVC2LP
 
         LD      GR3,0,GR1
         AND     GR3,MASK8
         ST      GR3,#F202
         LAD     GR1,1,GR1
         SUBA    GR2,ONE
-        JNZ     SVC2OUT
+        JNZ     SVC2LP
         RET
 
 ONE     DC      1
-TWO     DC      2
 MASK8   DC      #00FF
+TXBUSY  DC      2
 
         END

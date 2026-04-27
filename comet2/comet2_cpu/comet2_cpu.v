@@ -57,7 +57,6 @@ parameter ST_SVC_VECTOR_REQ = 8'd13;
 parameter ST_SVC_VECTOR_WAIT= 8'd14;
 parameter ST_SVC0_SP_REQ    = 8'd15;
 parameter ST_SVC0_SP_WAIT   = 8'd16;
-parameter ST_HALT           = 8'd17;
 
 parameter MR_NONE = 4'd0;
 parameter MR_LD   = 4'd1;
@@ -343,7 +342,6 @@ begin : main
    reg [15:0] result;
    reg [16:0] wide;
    reg shifted_out;
-   reg stack_faulted;
 
    if (reset == 1'b1) begin
       read_req <= 1'b0;
@@ -385,7 +383,6 @@ begin : main
       result = 16'h0000;
       wide = 17'h00000;
       shifted_out = 1'b0;
-      stack_faulted = 1'b0;
 
       case (state)
       ST_RESET_PR_REQ: begin
@@ -410,13 +407,8 @@ begin : main
       ST_RESET_SP_WAIT: begin
          read_addr <= bus_addr(16'd31);
          if (read_data_valid == 1'b1) begin
-            if (bus_word(read_data) > 16'hEFFF) begin
-               error_instruction <= 1'b1;
-               state <= ST_HALT;
-            end else begin
-               sp <= bus_word(read_data);
-               state <= ST_FETCH_REQ;
-            end
+            sp <= bus_word(read_data);
+            state <= ST_FETCH_REQ;
          end else begin
             read_req <= 1'b1;
          end
@@ -626,24 +618,24 @@ begin : main
                state <= ST_FETCH_REQ;
             end
             8'h70: begin
-               result = sp - 16'd1;
-               if ((sp > 16'hEFFF) || (result > 16'hEFFF)) begin
-                  error_instruction <= 1'b1;
-                  state <= ST_HALT;
+               // PUSH: SP decrements before write — fault if new SP would be in MMIO (>=0xF000).
+               // sp==0 wraps to 0xFFFF; sp[15:12]==4'hF means sp itself is already in MMIO range.
+               if (sp == 16'h0000 || sp[15:12] == 4'hF) begin
+                  fault_instruction();
                end else begin
-                  sp <= result;
-                  effective_addr <= result;
+                  sp <= sp - 16'd1;
+                  effective_addr <= sp - 16'd1;
                   write_word <= indexed_addr(operand, x);
                   mem_write_kind <= MW_PUSH;
                   state <= ST_MEM_WRITE;
                end
             end
             8'h71: begin
+               // POP: reads from current SP — fault if SP is already in MMIO (stack underflow).
                if (r > 4'd7) begin
                   fault_instruction();
-               end else if (sp > 16'hEFFF) begin
-                  error_instruction <= 1'b1;
-                  state <= ST_HALT;
+               end else if (sp[15:12] == 4'hF) begin
+                  fault_instruction();
                end else begin
                   effective_addr <= sp;
                   dest_reg <= r;
@@ -652,22 +644,21 @@ begin : main
                end
             end
             8'h80: begin
-               result = sp - 16'd1;
-               if ((sp > 16'hEFFF) || (result > 16'hEFFF)) begin
-                  error_instruction <= 1'b1;
-                  state <= ST_HALT;
+               // CALL: same SP overflow check as PUSH.
+               if (sp == 16'h0000 || sp[15:12] == 4'hF) begin
+                  fault_instruction();
                end else begin
-                  sp <= result;
-                  effective_addr <= result;
+                  sp <= sp - 16'd1;
+                  effective_addr <= sp - 16'd1;
                   write_word <= pr;
                   mem_write_kind <= MW_CALL;
                   state <= ST_MEM_WRITE;
                end
             end
             8'h81: begin
-               if (sp > 16'hEFFF) begin
-                  error_instruction <= 1'b1;
-                  state <= ST_HALT;
+               // RET: reads from current SP — fault if SP is in MMIO (stack underflow).
+               if (sp[15:12] == 4'hF) begin
+                  fault_instruction();
                end else begin
                   effective_addr <= sp;
                   mem_read_kind <= MR_RET;
@@ -677,23 +668,27 @@ begin : main
             8'hF0: begin
                result = indexed_addr(operand, x);
                if (result[7:0] == 8'h00) begin
+                  // SVC 0: warm-reset — reads mem[0x0000] as new PR and mem[31] as new SP.
                   effective_addr <= 16'h0000;
                   mem_read_kind <= MR_SVC;
                   state <= ST_MEM_READ_REQ;
+               end else if (result[7:0] > 8'h0F) begin
+                  // SVC N > 15: vector table only spans mem[1..15]; higher indices are invalid.
+                  fault_instruction();
+               end else if (sp == 16'h0000 || sp[15:12] == 4'hF) begin
+                  // SVC N (1-15): pushes PR to stack before indirect jump — same overflow check.
+                  fault_instruction();
                end else begin
-                  rhs = sp - 16'd1;
-                  if ((sp > 16'hEFFF) || (rhs > 16'hEFFF)) begin
-                     error_instruction <= 1'b1;
-                     state <= ST_HALT;
-                  end else begin
-                     sp <= rhs;
-                     effective_addr <= rhs;
-                     svc_vector_addr <= {8'h00, result[7:0]};
-                     write_word <= pr;
-                     mem_read_kind <= MR_SVC;
-                     mem_write_kind <= MW_SVC;
-                     state <= ST_MEM_WRITE;
-                  end
+                  // SVC N (1-15): push PR, then jump via mem[N] (indirect through vector table).
+                  // Note: mem_read_kind is MR_NONE because the vector fetch is handled by
+                  // ST_SVC_VECTOR_WAIT directly; MR_SVC is only used on the SVC 0 path.
+                  sp <= sp - 16'd1;
+                  effective_addr <= sp - 16'd1;
+                  svc_vector_addr <= {8'h00, result[7:0]};
+                  write_word <= pr;
+                  mem_read_kind <= MR_NONE;
+                  mem_write_kind <= MW_SVC;
+                  state <= ST_MEM_WRITE;
                end
             end
             default: begin
@@ -761,25 +756,11 @@ begin : main
             end
             MR_POP: begin
                gr[dest_reg] <= rhs;
-               result = sp + 16'd1;
-               if (result > 16'hEFFF) begin
-                  error_instruction <= 1'b1;
-                  state <= ST_HALT;
-                  stack_faulted = 1'b1;
-               end else begin
-                  sp <= result;
-               end
+               sp <= sp + 16'd1;
             end
             MR_RET: begin
                pr <= rhs;
-               result = sp + 16'd1;
-               if (result > 16'hEFFF) begin
-                  error_instruction <= 1'b1;
-                  state <= ST_HALT;
-                  stack_faulted = 1'b1;
-               end else begin
-                  sp <= result;
-               end
+               sp <= sp + 16'd1;
             end
             MR_SVC: begin
                pr <= rhs;
@@ -791,7 +772,7 @@ begin : main
                error_instruction <= 1'b1;
             end
             endcase
-            if (!stack_faulted && !((mem_read_kind == MR_SVC) && (effective_addr == 16'h0000))) begin
+            if (!((mem_read_kind == MR_SVC) && (effective_addr == 16'h0000))) begin
                state <= ST_FETCH_REQ;
             end
          end else begin
@@ -834,18 +815,11 @@ begin : main
       ST_SVC0_SP_WAIT: begin
          read_addr <= bus_addr(16'd31);
          if (read_data_valid == 1'b1) begin
-            if (bus_word(read_data) > 16'hEFFF) begin
-               error_instruction <= 1'b1;
-               state <= ST_HALT;
-            end else begin
-               sp <= bus_word(read_data);
-               state <= ST_FETCH_REQ;
-            end
+            sp <= bus_word(read_data);
+            state <= ST_FETCH_REQ;
          end else begin
             read_req <= 1'b1;
          end
-      end
-      ST_HALT: begin
       end
       default: begin
          error_instruction <= 1'b1;

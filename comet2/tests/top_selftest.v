@@ -1,26 +1,23 @@
-// Self-test: 5-instruction ROM firmware embedded in bitstream (rom.v).
+// Self-test: COMET II ROM firmware embedded in bitstream (comet2_selftest_rom.v).
 // No SPI, no host computer required. SPI logic is held in reset so the
 // result reflects only CPU + ROM + GPIO, not any external FTDI/SPI state.
 //
-// Derived from top_timer_debug.v — the ONLY difference is that memory.v
-// (SPRAM) is replaced by rom.v (same interface, hardcoded instructions).
-// The bus controller is byte-for-byte identical to top_timer_debug.v so
-// we know the CPU<->memory timing is correct.
+// Derived from top_timer_debug.v — the ONLY difference is that comet2_memory.v
+// (SPRAM) is replaced by comet2_selftest_rom.v (same interface, hardcoded COMET II
+// instructions). The bus controller is byte-for-byte identical to top_timer_debug.v
+// so we know the CPU<->memory timing is correct.
 //
-// Firmware (in rom.v):
-//   0x00: lui  a0, 8         -> a0 = 0x8000
-//   0x04: addi a0, a0, 256   -> a0 = 0x8100  (GPIO base)
-//   0x08: addi a1, x0, 1     -> a1 = 1
-//   0x0C: sw   a1, 0(a0)     -> gpio_reg[0]=1 => LED_R ON (active-low)
-//   0x10: jal  x0, 0         -> infinite loop
+// Firmware (comet2_selftest_rom.v) cycles through R → G → B LEDs via GPIO MMIO
+// at word address 0xF100, with a software delay loop between each colour.
+// After the blue phase it executes SVC 0, which reloads PR from mem[0x0000] and
+// SP from mem[0x001F], and the colour cycle restarts.
 //
-// LED behaviour (active-low: signal 0 = ON, signal 1 = OFF):
-//   0 – 2 s : LED_B ON (cpu_reset held by timer)
-//   After 2 s:
-//     LED_R ON              -> CPU + ROM + GPIO all work ✓
-//                              Problem is ONLY in the SPI firmware-load path.
-//     LED_G ON, LED_R OFF   -> cpu_error_instruction fired (bad opcode from ROM)
-//     All OFF               -> CPU not executing (check rom.v / bus controller)
+// LED behaviour (gpio_mm outputs are active-low: 0 = ON, 1 = OFF):
+//   0 – 2 s  : LED_B ON (cpu_reset held by hardware timer)
+//   After 2 s: ROM firmware drives LEDs through GPIO MMIO
+//     R → G → B cycling  -> CPU + ROM + GPIO all work correctly
+//     All OFF (no cycling) -> CPU not executing; check comet2_selftest_rom.v or
+//                             the bus controller timing
 //
 // Build and program:
 //   make selftest
@@ -126,10 +123,12 @@ module top(input [3:0] SW, input clk,
    // LED:
    // Blue  : ON while cpu_reset=1 (waiting for timer ~2s), OFF after reset release
    // Red   : controlled by ROM self-test firmware via gpio_mm (gpio_reg[0])
-   // Green : latches ON if cpu_error_instruction fires after reset release
+   // Green : controlled by ROM self-test firmware via gpio_mm (gpio_reg[1]);
+   //         latches ON if cpu_error_instruction fires so the error is visible
+   //         even after the ROM advances to a different LED colour
    assign LED_B = cpu_reset ? 1'b0 : gpio_led_b;
    assign LED_R = gpio_led_r;
-   assign LED_G = gpio_led_g;
+   assign LED_G = cpu_ever_error ? 1'b0 : gpio_led_g;
 
    reg [31:0] state;
    parameter IDLE=0, REQ_READ_SPI_STATUS=2, WRITE_MEMORY=6, START_CPU=9, INIT_CPU=10;

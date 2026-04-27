@@ -59,7 +59,7 @@ uart_rx_mmio_echo.bin: init.obj uart_rx_mmio_echo.obj
 timer_mmio_uart_test.bin: init.obj timer_mmio_uart_test.obj
 	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj timer_mmio_uart_test.obj -o timer_mmio_uart_test.bin
 
-led_red.bin: init.obj led_red.obj inout_uart.obj
+led_red.bin: init.obj led_red.obj
 	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj led_red.obj -o led_red.bin
 
 clean:

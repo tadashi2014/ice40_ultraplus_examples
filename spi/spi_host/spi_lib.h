@@ -78,6 +78,7 @@ int spi_init();
 int spi_send(uint8_t cmd, uint8_t val[3], uint8_t *status);
 int spi_send3(uint8_t cmd, uint8_t val0, uint8_t val1, uint8_t val2, uint8_t *status);
 int spi_send24b(uint8_t cmd, uint32_t val24b, uint8_t *status);
+int spi_send_batch_packets(const uint8_t *packets, size_t packet_count, uint8_t *last_status);
 
 int spi_read(uint8_t val[3], uint8_t *status);
 

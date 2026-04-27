@@ -1,10 +1,10 @@
 /*
- * Host-side SPI runner for COMET II spi_debug.
+ * comet2_spi_loader — host-side SPI batch runner for COMET II.
  *
  * Features:
  *   - load an arbitrary .bin image into COMET II RAM
  *   - start the CPU
- *   - optionally feed bytes to SVC 1 (IN)
+ *   - respond to SVC 1 IN_REQUEST packets (opcode 0x30) with input chars
  *   - collect bytes returned by SVC 2 (OUT)
  *
  * The OUT-side receive buffer is intentionally capped at 256 bytes.
@@ -12,6 +12,7 @@
  */
 
 #include <errno.h>
+#include <getopt.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,21 +22,33 @@
 
 #include "../../spi/spi_host/spi_lib.h"
 
-#define SPI_INIT            0x01
-#define SPI_SEND_FIRMWARE   0x02
-#define SPI_START_CPU       0x03
-#define COMET_CMD_IN_CHAR   0x10
-#define COMET_RSP_OUT_CHAR  0x20
+#define SPI_INIT              0x01
+#define SPI_SEND_FIRMWARE     0x02
+#define SPI_START_CPU         0x03
+#define COMET_CMD_IN_CHAR     0x10
+#define COMET_CMD_IN_REQUEST  0x30  /* firmware→host: "send me a character" */
+#define COMET_RSP_OUT_CHAR    0x20
 #define DEFAULT_FIRMWARE_PATH "./spi_debug_firmware/comet2_inout_main.bin"
-#define MAX_FIRMWARE_BYTES  (0xF000u * 2u)
-#define RX_BUFFER_SIZE      256u
-#define DEFAULT_IDLE_MS     200u
-#define INTER_CHAR_DRAIN_MS 5u
+#define MAX_FIRMWARE_BYTES    (0xF000u * 2u)
+#define RX_BUFFER_SIZE        256u
+#define DEFAULT_IDLE_MS       200u
+#define BURST_WORDS           8u
 
 struct run_options {
    const char *firmware_path;
    const char *input_text;
    unsigned int idle_timeout_ms;
+   int use_burst;
+   int probe_reload;
+   int reload_safe;
+};
+
+struct drain_report {
+   unsigned int reads;
+   unsigned int packets;
+   unsigned int quiet_reads;
+   uint8_t first_status;
+   uint8_t last_status;
 };
 
 struct rx_capture {
@@ -44,14 +57,40 @@ struct rx_capture {
    size_t dropped;
 };
 
+/*
+ * input_source: tracks which character to supply to the CPU on each
+ * IN_REQUEST (opcode 0x30) from the firmware.
+ *
+ * If text != NULL: consume text[pos] one character at a time, then supply
+ *                  '\n' indefinitely (terminates the last scanf field).
+ * If text == NULL: read stdin one character at a time via fgetc(); supply
+ *                  '\n' after EOF.
+ */
+struct input_source {
+   const char *text;
+   size_t pos;
+   int eof;
+};
+
 static void print_usage(const char *prog)
 {
    fprintf(stderr,
-           "Usage: %s [-f firmware.bin] [-i input_text] [-t idle_ms]\n"
+           "Usage: %s [--burst] [--probe-reload] [--reload-safe] [-f firmware.bin] [-i input_text] [-t idle_ms]\n"
            "  -f firmware.bin : COMET II main memory image to load\n"
-           "  -i input_text   : bytes to send through SVC 1 after start\n"
-           "  -t idle_ms      : stop after this many ms without OUT data (default: %u)\n",
-           prog, DEFAULT_IDLE_MS);
+           "  -i input_text   : characters to supply to SVC 1 IN_REQUEST packets\n"
+           "                    if omitted, stdin is read on demand\n"
+           "  -t idle_ms      : stop after this many ms without OUT data (default: %u)\n"
+           "  --burst         : batch 8 firmware packets per SPI transaction\n"
+           "                    (requires the updated spi_slave queue bitstream)\n"
+           "  --probe-reload  : print bounded pre-INIT drain observations\n"
+           "  --reload-safe   : drain stale SPI output before INIT using the\n"
+           "                    conservative reload-safe path\n"
+           "Examples:\n"
+            "  %s -f prog.bin -i \"12 3.5 Z hello\"\n"
+            "  %s --burst -f prog.bin -i \"12 3.5 Z hello\"\n"
+           "  %s --reload-safe -f prog.bin\n"
+            "  echo \"42\" | %s -f prog.bin\n",
+           prog, DEFAULT_IDLE_MS, prog, prog, prog, prog);
 }
 
 static uint64_t now_ms(void)
@@ -64,13 +103,31 @@ static uint64_t now_ms(void)
 static int parse_args(int argc, char **argv, struct run_options *opts)
 {
    int ch;
+   static const struct option long_options[] = {
+      {"burst", no_argument, NULL, 'b'},
+      {"probe-reload", no_argument, NULL, 'p'},
+      {"reload-safe", no_argument, NULL, 'r'},
+      {0, 0, 0, 0}
+   };
 
    opts->firmware_path = DEFAULT_FIRMWARE_PATH;
    opts->input_text = NULL;
    opts->idle_timeout_ms = DEFAULT_IDLE_MS;
+   opts->use_burst = 0;
+   opts->probe_reload = 0;
+   opts->reload_safe = 0;
 
-   while ((ch = getopt(argc, argv, "f:i:t:h")) != -1) {
+   while ((ch = getopt_long(argc, argv, "bprf:i:t:h", long_options, NULL)) != -1) {
       switch (ch) {
+      case 'b':
+         opts->use_burst = 1;
+         break;
+      case 'p':
+         opts->probe_reload = 1;
+         break;
+      case 'r':
+         opts->reload_safe = 1;
+         break;
       case 'f':
          opts->firmware_path = optarg;
          break;
@@ -166,52 +223,169 @@ static uint8_t *read_firmware_file(const char *path, size_t *firmware_size)
    return firmware;
 }
 
-static int load_and_start_comet_firmware(const char *firmware_path)
+static void drain_spi_output_until_quiet(struct drain_report *report,
+                                         unsigned int max_reads,
+                                         unsigned int quiet_goal)
+{
+   uint8_t drain_pkt[3] = {0, 0, 0};
+   uint8_t drain_st = 0;
+
+   memset(report, 0, sizeof(*report));
+
+   while (report->reads < max_reads && report->quiet_reads < quiet_goal) {
+      if (spi_read(drain_pkt, &drain_st)) {
+         if (report->packets == 0) {
+            report->first_status = drain_st;
+         }
+         report->last_status = drain_st;
+         report->packets++;
+         report->quiet_reads = 0;
+      } else {
+         report->quiet_reads++;
+      }
+      report->reads++;
+   }
+}
+
+static void print_drain_report(const char *phase, const struct drain_report *report)
+{
+   if (report->packets == 0) {
+      fprintf(stderr, "%s: drained 0 packets in %u reads\n",
+              phase, report->reads);
+      return;
+   }
+
+   fprintf(stderr,
+           "%s: drained %u packet(s) in %u reads, first_status=%02x last_status=%02x\n",
+           phase,
+           report->packets,
+           report->reads,
+           report->first_status,
+           report->last_status);
+}
+
+static int send_firmware_legacy(const uint8_t *firmware, size_t firmware_size, uint8_t *spi_status)
+{
+   size_t i;
+
+   for (i = 0; i < firmware_size; i += 2) {
+      uint8_t packet[3] = {firmware[i], firmware[i + 1], 0x00};
+      if (spi_send(SPI_SEND_FIRMWARE, packet, spi_status) != 0) {
+         fprintf(stderr, "firmware transfer failed at byte %zu (status=%02x)\n", i, *spi_status);
+         return -1;
+      }
+      usleep(50);
+   }
+
+   return 0;
+}
+
+static int send_firmware_burst(const uint8_t *firmware, size_t firmware_size, uint8_t *spi_status)
+{
+   size_t i = 0;
+
+   while (i < firmware_size) {
+      unsigned int words = (unsigned int)((firmware_size - i) / 2u);
+      unsigned int w;
+      uint8_t batch[BURST_WORDS * 4u];
+
+      if (words > BURST_WORDS) {
+         words = BURST_WORDS;
+      }
+      for (w = 0; w < words; w++) {
+         batch[w * 4u + 0u] = SPI_SEND_FIRMWARE;
+         batch[w * 4u + 1u] = firmware[i];
+         batch[w * 4u + 2u] = firmware[i + 1u];
+         batch[w * 4u + 3u] = 0x00;
+         i += 2;
+      }
+      if (spi_send_batch_packets(batch, words, spi_status) != 0) {
+         fprintf(stderr, "burst firmware transfer failed at byte %zu (status=%02x)\n", i, *spi_status);
+         return -1;
+      }
+   }
+
+   return 0;
+}
+
+static int load_and_start_comet_firmware(const char *firmware_path,
+                                         int use_burst,
+                                         int reload_safe,
+                                         int probe_reload)
 {
    uint8_t no_param[3] = {0x00, 0x00, 0x00};
    uint8_t spi_status = 0;
    uint8_t *firmware = NULL;
    size_t firmware_size = 0;
-   size_t i;
 
    firmware = read_firmware_file(firmware_path, &firmware_size);
    if (firmware == NULL) {
       return -1;
    }
 
-   sleep(1);
-   if (spi_send(SPI_INIT, no_param, NULL) != 0) {
-      fprintf(stderr, "failed to send SPI_INIT\n");
+   /* Stable baseline path: keep the original bounded drain before INIT.
+    * Reload-safe mode switches to a bounded "drain until quiet" pass
+    * without changing spi_send() semantics. */
+   if (reload_safe || probe_reload) {
+      struct drain_report report;
+      drain_spi_output_until_quiet(&report, 64, 4);
+      if (probe_reload) {
+         print_drain_report("pre-init drain", &report);
+      }
+   } else {
+      int drain_i;
+      uint8_t drain_pkt[3] = {0, 0, 0};
+      uint8_t drain_st = 0;
+      for (drain_i = 0; drain_i < 10; drain_i++) {
+         spi_read(drain_pkt, &drain_st);
+      }
+   }
+   usleep(20000);
+   if (spi_send(SPI_INIT, no_param, &spi_status) != 0) {
+      fprintf(stderr, "failed to send SPI_INIT (status=%02x)\n", spi_status);
       free(firmware);
       return -1;
    }
-   printf("loaded firmware image: %s (%zu bytes)\n", firmware_path, firmware_size);
+   if (probe_reload) {
+      fprintf(stderr, "probe: SPI_INIT acknowledged with status=%02x\n", spi_status);
+   }
+   fprintf(stderr, "loaded firmware image: %s (%zu bytes)\n", firmware_path, firmware_size);
 
-   for (i = 0; i < firmware_size; i += 2) {
-      uint8_t packet[3] = {firmware[i], firmware[i + 1], 0x00};
-      if (spi_send(SPI_SEND_FIRMWARE, packet, &spi_status) != 0) {
-         fprintf(stderr, "firmware transfer failed at byte %zu (status=%02x)\n", i, spi_status);
+   if (use_burst) {
+      if (send_firmware_burst(firmware, firmware_size, &spi_status) != 0) {
          free(firmware);
          return -1;
       }
-      usleep(1000);
+   } else {
+      if (send_firmware_legacy(firmware, firmware_size, &spi_status) != 0) {
+         free(firmware);
+         return -1;
+      }
    }
 
    free(firmware);
 
-   sleep(1);
+   usleep(20000);
    if (spi_send(SPI_START_CPU, no_param, &spi_status) != 0) {
       fprintf(stderr, "failed to send SPI_START_CPU (status=%02x)\n", spi_status);
       return -1;
    }
-   sleep(1);
+   usleep(20000);
    return 0;
 }
 
 static int comet_send_in_char(uint8_t ch)
 {
    uint8_t status = 0;
-   uint8_t payload[3] = {0x00, ch, 0x00};
+   /*
+    * SPI packet layout: spi_send(cmd, {val[0], val[1], val[2]}) sends
+    * the 4-byte sequence [cmd, val[0], val[1], val[2]].  The FPGA SPI
+    * slave maps:
+    *   val[0] → COMET #F001 (opcode register, firmware checks == OPIN = 0x10)
+    *   val[1] → COMET #F002 (data register, the character to receive)
+    * So val[0] must be COMET_CMD_IN_CHAR (= OPIN = 0x10).
+    */
+   uint8_t payload[3] = {COMET_CMD_IN_CHAR, ch, 0x00};
    return spi_send(COMET_CMD_IN_CHAR, payload, &status);
 }
 
@@ -229,7 +403,44 @@ static void rx_capture_push(struct rx_capture *capture, uint8_t ch)
    }
 }
 
-static int drain_output_until_idle(struct rx_capture *capture, unsigned int idle_timeout_ms)
+/*
+ * input_source_next: return the next character to supply to the CPU on an
+ * IN_REQUEST.  For -i mode, consume src->text one character at a time and
+ * return '\n' after the last one.  For stdin mode, call fgetc() (blocks
+ * until a character or EOF is available) and return '\n' on EOF.
+ */
+static uint8_t input_source_next(struct input_source *src)
+{
+   if (src->text != NULL) {
+      if (src->text[src->pos] != '\0') {
+         return (uint8_t)src->text[src->pos++];
+      }
+      return '\n';   /* terminating newline after end of -i string */
+   }
+   /* stdin: fgetc blocks until data (or EOF) – canonical mode buffers a
+    * whole line, so the first call blocks at the terminal and subsequent
+    * calls return the rest of the line immediately. */
+   if (!src->eof) {
+      int c = fgetc(stdin);
+      if (c == EOF) {
+         src->eof = 1;
+         return '\n';
+      }
+      return (uint8_t)c;
+   }
+   return '\n';   /* keep supplying '\n' after stdin EOF */
+}
+
+/*
+ * run_io_loop: unified event loop after firmware start.
+ *
+ * Collects SVC 2 OUT bytes (opcode 0x20) into capture.
+ * Responds to SVC 1 IN_REQUEST packets (opcode 0x30) with the next
+ * character from src – no host-side polling or timing guesswork needed.
+ * Exits after idle_timeout_ms with no OUT or IN_REQUEST activity.
+ */
+static int run_io_loop(struct rx_capture *capture, struct input_source *src,
+                       unsigned int idle_timeout_ms)
 {
    uint64_t deadline = now_ms() + idle_timeout_ms;
 
@@ -247,30 +458,20 @@ static int drain_output_until_idle(struct rx_capture *capture, unsigned int idle
          continue;
       }
 
+      if (packet[0] == COMET_CMD_IN_REQUEST) {
+         uint8_t ch = input_source_next(src);
+         if (comet_send_in_char(ch) != 0) {
+            fprintf(stderr, "failed to send char 0x%02x\n", (unsigned int)ch);
+            return -1;
+         }
+         continue;
+      }
+
       fprintf(stderr, "ignored packet: %02x %02x %02x (status=%02x)\n",
               packet[0], packet[1], packet[2], status);
    }
 
    return 0;
-}
-
-static void drain_output_for_window(struct rx_capture *capture, unsigned int window_ms)
-{
-   uint64_t deadline = now_ms() + window_ms;
-
-   while (now_ms() < deadline) {
-      uint8_t packet[3] = {0, 0, 0};
-      uint8_t status = 0;
-
-      if (comet_read_packet(packet, &status) != 0) {
-         continue;
-      }
-      deadline = now_ms() + window_ms;
-
-      if (packet[0] == COMET_RSP_OUT_CHAR) {
-         rx_capture_push(capture, packet[1]);
-      }
-   }
 }
 
 static void print_capture_summary(const struct rx_capture *capture)
@@ -307,7 +508,7 @@ int main(int argc, char **argv)
 {
    struct run_options opts;
    struct rx_capture capture;
-   size_t i;
+   struct input_source src;
    int parse_result;
 
    memset(&capture, 0, sizeof(capture));
@@ -324,31 +525,22 @@ int main(int argc, char **argv)
       return 1;
    }
 
-   if (load_and_start_comet_firmware(opts.firmware_path) != 0) {
+   if (load_and_start_comet_firmware(opts.firmware_path,
+                                     opts.use_burst,
+                                     opts.reload_safe,
+                                     opts.probe_reload) != 0) {
       return 1;
    }
 
+   src.text = opts.input_text;
+   src.pos = 0;
+   src.eof = 0;
+
    if (opts.input_text != NULL) {
-      printf("sending input: %s", opts.input_text);
-      if (opts.input_text[0] != '\0' && opts.input_text[strlen(opts.input_text) - 1] != '\n') {
-         printf("\n");
-      }
-      for (i = 0; opts.input_text[i] != '\0'; ++i) {
-         if (comet_send_in_char((uint8_t)opts.input_text[i]) != 0) {
-            fprintf(stderr, "failed to send char 0x%02x at index %zu\n",
-                    (unsigned int)(uint8_t)opts.input_text[i], i);
-            return 1;
-         }
-         /*
-          * The legacy SPI IN/OUT firmware echoes one character at a time and the
-          * host->CPU path is only single-entry buffered, so we opportunistically
-          * drain immediate responses between transmitted bytes.
-          */
-         drain_output_for_window(&capture, INTER_CHAR_DRAIN_MS);
-      }
+      fprintf(stderr, "sending input: %s\n", opts.input_text);
    }
 
-   if (drain_output_until_idle(&capture, opts.idle_timeout_ms) != 0) {
+   if (run_io_loop(&capture, &src, opts.idle_timeout_ms) != 0) {
       return 1;
    }
 

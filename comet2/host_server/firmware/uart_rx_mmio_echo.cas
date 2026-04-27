@@ -1,5 +1,6 @@
 ; UART RX/TX MMIO direct echo test for spi_debug build.
 ; Polls #F200 bit0, reads one byte from #F201, and writes it back to #F202.
+; TX waits on bit1 (TX busy).
 
 MAIN    START
 LOOP    LD      GR3,#F200

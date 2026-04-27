@@ -169,6 +169,134 @@ static void test_call_ret_push_pop(Vcomet2_cpu *tb) {
   expect_word(mem, 0x0303, 0x7777, "PUSH/POP result");
 }
 
+/*
+ * Run up to max_cycles.  Returns true if error_instruction fires before
+ * the cycle limit; false if the limit is reached without a fault.
+ */
+static bool run_expecting_fault(Vcomet2_cpu *tb, Memory &mem, int max_cycles) {
+  for (int i = 0; i < max_cycles; i++) {
+    tick(tb, mem, false);
+    if (tb->error_instruction) return true;
+  }
+  return false;
+}
+
+/*
+ * SP overflow: PUSH with SP=0 must fault (sp-1 = 0xFFFF → MMIO write).
+ */
+static void test_push_sp_overflow(Vcomet2_cpu *tb) {
+  Memory mem;
+  load_word(mem, 0, 0x0100);
+  load_word(mem, 31, 0x0000); // initial SP = 0 → first PUSH would write to 0xFFFF
+
+  uint16_t pc = 0x0100;
+  load_2word(mem, pc, insn(0x12, 1, 0), 0xABCD); // LAD GR1,#ABCD
+  load_2word(mem, pc, insn(0x70, 0, 0), 0x0000); // PUSH #0 with SP=0 → overflow
+
+  reset_cpu(tb, mem);
+  if (!run_expecting_fault(tb, mem, 60)) {
+    printf("PUSH SP overflow not detected\n");
+    exit(1);
+  }
+}
+
+/*
+ * SP overflow: CALL with SP=0 must fault.
+ */
+static void test_call_sp_overflow(Vcomet2_cpu *tb) {
+  Memory mem;
+  load_word(mem, 0, 0x0100);
+  load_word(mem, 31, 0x0000); // initial SP = 0
+
+  uint16_t pc = 0x0100;
+  load_2word(mem, pc, insn(0x80, 0, 0), 0x0120); // CALL SUB with SP=0 → overflow
+
+  // SUB body (should never be reached)
+  pc = 0x0120;
+  load_word(mem, pc++, insn(0x81, 0, 0)); // RET
+
+  reset_cpu(tb, mem);
+  if (!run_expecting_fault(tb, mem, 60)) {
+    printf("CALL SP overflow not detected\n");
+    exit(1);
+  }
+}
+
+/*
+ * SP underflow: POP with SP in MMIO range must fault.
+ * SP is set to 0xF000 so reading "from stack" would hit MMIO.
+ */
+static void test_pop_sp_underflow(Vcomet2_cpu *tb) {
+  Memory mem;
+  load_word(mem, 0, 0x0100);
+  load_word(mem, 31, 0xF000); // initial SP = 0xF000 → POP reads from MMIO
+
+  uint16_t pc = 0x0100;
+  load_word(mem, pc++, insn(0x71, 1, 0)); // POP GR1 with SP=0xF000 → underflow
+
+  reset_cpu(tb, mem);
+  if (!run_expecting_fault(tb, mem, 60)) {
+    printf("POP SP underflow not detected\n");
+    exit(1);
+  }
+}
+
+/*
+ * SP underflow: RET with SP in MMIO range must fault.
+ */
+static void test_ret_sp_underflow(Vcomet2_cpu *tb) {
+  Memory mem;
+  load_word(mem, 0, 0x0100);
+  load_word(mem, 31, 0xF000); // initial SP = 0xF000 → RET reads from MMIO
+
+  uint16_t pc = 0x0100;
+  load_word(mem, pc++, insn(0x81, 0, 0)); // RET with SP=0xF000 → underflow
+
+  reset_cpu(tb, mem);
+  if (!run_expecting_fault(tb, mem, 60)) {
+    printf("RET SP underflow not detected\n");
+    exit(1);
+  }
+}
+
+/*
+ * SVC N > 15 must fault (vector table only covers mem[1]..mem[15]).
+ */
+static void test_svc_invalid_vector(Vcomet2_cpu *tb) {
+  Memory mem;
+  load_word(mem, 0, 0x0100);
+  load_word(mem, 31, 0x0200);
+
+  uint16_t pc = 0x0100;
+  load_2word(mem, pc, insn(0xF0, 0, 0), 0x0010); // SVC 16 (N=16 > 15) → invalid
+
+  reset_cpu(tb, mem);
+  if (!run_expecting_fault(tb, mem, 60)) {
+    printf("SVC N>15 not detected as invalid\n");
+    exit(1);
+  }
+}
+
+/*
+ * SVC N (1-15): SP overflow must fault.
+ */
+static void test_svc_sp_overflow(Vcomet2_cpu *tb) {
+  Memory mem;
+  load_word(mem, 0, 0x0100);
+  load_word(mem, 1, 0x0120);
+  load_word(mem, 31, 0x0000); // initial SP = 0 → SVC 1 would push to 0xFFFF (MMIO)
+
+  uint16_t pc = 0x0100;
+  load_2word(mem, pc, insn(0xF0, 0, 0), 0x0001); // SVC 1 with SP=0 → overflow
+
+  reset_cpu(tb, mem);
+  if (!run_expecting_fault(tb, mem, 60)) {
+    printf("SVC SP overflow not detected\n");
+    exit(1);
+  }
+}
+
+
 static void test_svc_ret(Vcomet2_cpu *tb) {
   Memory mem;
   load_word(mem, 0, 0x0100);
@@ -199,6 +327,12 @@ int main(int argc, char **argv) {
   test_arithmetic_compare_and_branch(tb);
   test_call_ret_push_pop(tb);
   test_svc_ret(tb);
+  test_push_sp_overflow(tb);
+  test_call_sp_overflow(tb);
+  test_pop_sp_underflow(tb);
+  test_ret_sp_underflow(tb);
+  test_svc_invalid_vector(tb);
+  test_svc_sp_overflow(tb);
 
   printf("COMET II CPU tests passed\n");
   delete tb;

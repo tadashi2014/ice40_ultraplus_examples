@@ -177,10 +177,16 @@ class Linker:
         out = f"{(addr + offset) & 0xFFFF:04X}:"
         pos = 5
         if len(line) >= pos + 4 and self.is_hex4(line[pos:]):
-            out += line[pos : pos + 4]
+            word1 = self.from_hex4(line[pos:])
             pos += 4
-            if pos < len(line) and line[pos] == "-":
-                out += "-"
+            if pos < len(line) and line[pos] == "R":
+                # Single-word relocatable address: DC with a same-module label
+                # reference.  The assembler emits "VVVVR" when the label is
+                # resolved during pass 2.  Apply the module relocation offset.
+                out += f"{(word1 + offset) & 0xFFFF:04X}R"
+                pos += 1
+            elif pos < len(line) and line[pos] == "-":
+                out += f"{word1:04X}-"
                 pos += 1
                 if len(line) >= pos + 4 and self.is_hex4(line[pos:]):
                     has_r = len(line) > pos + 4 and line[pos + 4] == "R"
@@ -197,6 +203,8 @@ class Linker:
                     symbol = line[start:pos]
                     resolved = self.lookup_xdef(symbol)
                     out += f"{resolved & 0xFFFF:04X}" if resolved >= 0 else symbol
+            else:
+                out += f"{word1:04X}"
         elif pos < len(line) and self.is_sym_char(line[pos]):
             start = pos
             while pos < len(line) and self.is_sym_char(line[pos]):

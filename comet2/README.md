@@ -2,9 +2,15 @@
 
 COMET II soft CPU for the Lattice iCE40 UltraPlus Breakout Board.
 
+This README lives under `COMET2_HW/comet2/`, the hardware example area for the
+Lattice iCE40 UltraPlus Breakout Board in this repository.
+
 This directory contains the COMET II implementation that was split out from the
 mixed `riscv/` tree so the RISC-V and COMET II flows can be maintained
 independently.
+
+For repeated firmware-download work, see
+[`RELOAD_REDESIGN.md`](RELOAD_REDESIGN.md).
 
 ## Layout
 
@@ -38,7 +44,7 @@ make prog_spi
 ```
 
 The `spi`, `debug`, and `selftest` targets are built from files under
-[`tests/`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/tests).
+[`tests/`](tests/).
 
 ### Self-test bitstream
 
@@ -130,10 +136,43 @@ make
 ./comet2_spi_loader -f ./firmware/hanoi.bin
 ```
 
+For faster firmware loading, use `--burst`. This batches 8 legacy firmware
+packets into one SPI transaction, reducing host-side FTDI/USB round trips.
+It requires a bitstream built with the updated `spi_slave.v` receive queue.
+
+```sh
+cd host_server
+make
+./comet2_spi_loader --burst -f ./firmware/hanoi.bin
+./comet2_spi_run --burst -f ./firmware/hanoi.bin
+```
+
+For repeated-download investigation, the host tools also support two
+conservative reload helpers:
+
+- `--probe-reload`: keep the normal load path, but print a bounded pre-INIT
+  drain report and the `SPI_INIT` acknowledgement status
+- `--reload-safe`: replace the fixed pre-INIT drain with a bounded
+  "drain until quiet" pass, while keeping the normal checked `SPI_INIT`
+  and normal firmware transfer path
+
+Examples:
+
+```sh
+./comet2_spi_loader --probe-reload -f ./firmware/hanoi.bin
+./comet2_spi_loader --reload-safe -f ./firmware/hanoi.bin
+./comet2_spi_run --probe-reload -f ./firmware/hanoi.bin
+```
+
+`comet2_spi_run` keeps a long idle timeout while input is still open, but after
+Ctrl-D / EOF it now waits only a short drain window before returning to the
+shell. Use `-e <ms>` to tune that post-EOF drain time if a firmware needs more
+time to print trailing output.
+
 Optional input bytes can be sent through `SVC 1`.
 
 ```sh
-cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/tests/host_server
+cd tests/host_server
 make
 ./comet2_inout_host "HELLO\n"
 ```
@@ -153,29 +192,29 @@ In the default `top.v` build, UART is mapped at `0xF200`-`0xF203`.
 - `0xF203`: control, write bit0=`1` to clear RX overflow
 
 Sample UART-backed SVC handlers are in
-[`host_server/firmware/inout_uart.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/inout_uart.cas).
+[`host_server/firmware/inout_uart.cas`](host_server/firmware/inout_uart.cas).
 A minimal UART echo test program is in
-[`host_server/firmware/uart_echo.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/uart_echo.cas).
+[`host_server/firmware/uart_echo.cas`](host_server/firmware/uart_echo.cas).
 A TX-only UART test program is in
-[`host_server/firmware/uart_tx_test.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/uart_tx_test.cas).
+[`host_server/firmware/uart_tx_test.cas`](host_server/firmware/uart_tx_test.cas).
 A direct MMIO TX test program is in
-[`host_server/firmware/uart_tx_mmio_test.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/uart_tx_mmio_test.cas).
+[`host_server/firmware/uart_tx_mmio_test.cas`](host_server/firmware/uart_tx_mmio_test.cas).
 A direct MMIO RX echo test program is in
-[`host_server/firmware/uart_rx_mmio_echo.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/uart_rx_mmio_echo.cas).
+[`host_server/firmware/uart_rx_mmio_echo.cas`](host_server/firmware/uart_rx_mmio_echo.cas).
 
 `host_server/firmware` では `make` で主要サンプルの `.bin` をまとめて生成できます。
 
 Example build flow:
 
 ```sh
-cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+cd host_server/firmware
 make uart_echo.bin
 ```
 
 `hanoi` を UART コンソールで流したい場合は従来どおりこちらです。
 
 ```sh
-cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+cd host_server/firmware
 python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
 python3 ../asm_tools/casl2_asm/casl2.py -x hanoi.cas
 python3 ../asm_tools/casl2_asm/casl2.py -x inout_uart.cas
@@ -185,7 +224,7 @@ python3 ../asm_tools/obj2bin.py --no-runtime init.obj hanoi.obj inout_uart.obj -
 TX 単体確認ならこちらです。
 
 ```sh
-cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+cd host_server/firmware
 python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
 python3 ../asm_tools/casl2_asm/casl2.py -x uart_tx_test.cas
 python3 ../asm_tools/casl2_asm/casl2.py -x inout_uart.cas
@@ -195,7 +234,7 @@ python3 ../asm_tools/obj2bin.py --no-runtime init.obj uart_tx_test.obj inout_uar
 `OUT` / `SVC 2` を通さず UART MMIO を直叩きして切り分けるならこちらです。
 
 ```sh
-cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+cd host_server/firmware
 python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
 python3 ../asm_tools/casl2_asm/casl2.py -x uart_tx_mmio_test.cas
 python3 ../asm_tools/obj2bin.py --no-runtime init.obj uart_tx_mmio_test.obj -o uart_tx_mmio_test.bin
@@ -204,7 +243,7 @@ python3 ../asm_tools/obj2bin.py --no-runtime init.obj uart_tx_mmio_test.obj -o u
 RX も含めて MMIO 直結で echo を確認するならこちらです。
 
 ```sh
-cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+cd host_server/firmware
 python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
 python3 ../asm_tools/casl2_asm/casl2.py -x uart_rx_mmio_echo.cas
 python3 ../asm_tools/obj2bin.py --no-runtime init.obj uart_rx_mmio_echo.obj -o uart_rx_mmio_echo.bin
@@ -234,11 +273,11 @@ This timer does not generate CPU interrupts yet. It is intended for busy-wait
 or periodic polling from COMET II software.
 
 A simple UART-backed timer polling sample is in
-[`host_server/firmware/timer_mmio_uart_test.cas`](/Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware/timer_mmio_uart_test.cas).
+[`host_server/firmware/timer_mmio_uart_test.cas`](host_server/firmware/timer_mmio_uart_test.cas).
 It programs the timer for about 1 second, waits for `fired`, prints `TICK`,
 and repeats forever.
 
 ```sh
-cd /Users/tadashi/Workspace/iCE40-UltraPlus-BB/ice40_ultraplus_examples/comet2/host_server/firmware
+cd host_server/firmware
 make timer_mmio_uart_test.bin
 ```

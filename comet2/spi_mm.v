@@ -41,6 +41,10 @@ module spi_mm(input wire clk, input wire reset,
    reg[31:0] read_data_register;
    reg[31:0] assert_read_register;
    reg[31:0] write_data_register;
+   localparam OP_NOP               = 8'h0;
+   localparam OP_INIT              = 8'h1;
+   localparam OP_SEND_FIRMWARE     = 8'h2;
+   localparam OP_START_CPU         = 8'h3;
 
    initial begin
       wr_en = 0;
@@ -68,6 +72,8 @@ module spi_mm(input wire clk, input wire reset,
          read_data_register <= 0;
          assert_read_register <= 0;
          write_data_register <= 0;
+         firm_wr <= 0;
+         firm_data <= 0;
       end else begin
 
          //defaults
@@ -79,34 +85,43 @@ module spi_mm(input wire clk, input wire reset,
          status_register[1] <= ~wr_buffer_free;
          status_register[2] <= 1;
 
-         if(rd_data_available == 1 && status_register[0] == 0) begin
-            if(spi_module_rd_data[7:0] == 8'h0) begin //NOP
-               rd_ack <= 1;
-            end else if(spi_module_rd_data[7:0] == 8'h1) begin //INIT
-               // cpu_init は top.v の cpu_init_ack でクリアされる。
-               // ここでは常に rd_ack を返して spi_slave をブロックしない。
+         if(rd_data_available == 1) begin
+            if(spi_module_rd_data[7:0] == OP_INIT) begin //INIT
+               // INIT は status_register[0] の値に関係なく常に処理する。
+               // 前回の実行で status_register[0]==1 が残っている場合でも
+               // 2 回目以降の実行で SPI_INIT がドロップされないようにするため。
+               // CPU をリセットするため未処理の受信データは不要なので
+               // status_register[0] もここでクリアする。
                cpu_init <= 1;
                rd_ack <= 1;
-            end else if(spi_module_rd_data[7:0] == 8'h2) begin //SEND FIRMWARE
-               // FIX: firm_wr==0 のときのみ firm_data を更新し rd_ack を返す。
-               // firm_wr==1 のときは rd_ack を返さない。spi_slave の
-               // rd_data_available が 1 のまま残るので、次の SPI トランザクションで
-               // ホストがステータスビット(bit6)=0 を受け取り自動的にリトライする。
-               // これにより WRITE_MEMORY がまだ処理中のときにパケットが
-               // サイレントに失われてカウンタがずれる問題を防ぐ。
-               if(firm_wr == 0) begin
-                  firm_data <= spi_module_rd_data[23:8];
-                  firm_wr <= 1;
+               status_register[0] <= 0;
+               firm_wr <= 0;
+            end else if(status_register[0] == 0) begin
+               if(spi_module_rd_data[7:0] == OP_NOP) begin //NOP
                   rd_ack <= 1;
+               end else if(spi_module_rd_data[7:0] == OP_SEND_FIRMWARE) begin //SEND FIRMWARE
+                  // FIX: firm_wr==0 のときのみ firm_data を更新し rd_ack を返す。
+                  // firm_wr==1 のときは rd_ack を返さない。spi_slave の
+                  // rd_data_available が 1 のまま残るので、次の SPI トランザクションで
+                  // ホストがステータスビット(bit6)=0 を受け取り自動的にリトライする。
+                  // これにより WRITE_MEMORY がまだ処理中のときにパケットが
+                  // サイレントに失われてカウンタがずれる問題を防ぐ。
+                  if(firm_wr == 0) begin
+                     firm_data <= spi_module_rd_data[23:8];
+                     firm_wr <= 1;
+                     rd_ack <= 1;
+                  end
+                  // firm_wr==1 の場合: rd_ack を返さない。ホストが自動リトライ。
+               end else if(spi_module_rd_data[7:0] == OP_START_CPU) begin //START CPU
+                  if(firm_wr == 0) begin
+                     cpu_start <= 1;
+                     rd_ack <= 1;
+                  end
+               end else begin //opcode >= 0x4: CPU コマンド
+                  read_data_register <= spi_module_rd_data;
+                  rd_ack <= 1;
+                  status_register[0] <= 1;
                end
-               // firm_wr==1 の場合: rd_ack を返さない。ホストが自動リトライ。
-            end else if (spi_module_rd_data[7:0] == 8'h3) begin //START CPU
-               cpu_start <= 1;
-               rd_ack <= 1;
-            end else begin //opcode >= 0x4: CPU コマンド
-               read_data_register <= spi_module_rd_data;
-               rd_ack <= 1;
-               status_register[0] <= 1;
             end
          end
 

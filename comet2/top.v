@@ -245,11 +245,6 @@ module top(input [3:0] SW, input clk, output LED_R, output LED_G, output LED_B,
       memory_wr_data <= 0;
       memory_wr_mask <= 4'b1111;
 
-      // CPU fault (e.g. SP overflow) forces halt/reset until SPI start.
-      if(cpu_error_instruction == 1) begin
-         cpu_reset <= 1;
-      end
-
       //handling of SPI messages from host
       case (state)
       IDLE: begin
