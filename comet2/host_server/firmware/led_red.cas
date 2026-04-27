@@ -1,0 +1,18 @@
+; Minimal GPIO MMIO sample for default COMET2 top.
+; Continuously writes 1 to #F100 (GPIO LED register) so Red LED stays ON.
+; bit0=R, bit1=G, bit2=B; LED outputs are active-low, so writing 1 turns Red ON.
+
+MAIN    START
+        LAD     GR1,1          ; GR1 = 1 (Red LED bit)
+LOOP    ST      GR1,#F100      ; write to GPIO MMIO address #F100 directly
+        JUMP    LOOP
+
+; Required by init.cas service vector; unused in this sample.
+SVC1IN  START
+        RET
+
+; Required by init.cas service vector; unused in this sample.
+SVC2OUT START
+        RET
+
+        END
