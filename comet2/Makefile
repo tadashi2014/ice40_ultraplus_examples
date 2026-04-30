@@ -14,30 +14,5 @@ prog:
 prog_flash:
 	iceprog $(filename).bin
 
-spi:
-	$(MAKE) -C tests spi
-
-prog_spi:
-	$(MAKE) -C tests prog_spi
-
-debug:
-	$(MAKE) -C tests timer_debug
-
-prog_debug:
-	$(MAKE) -C tests prog_timer_debug
-
-spi_debug:
-	@$(MAKE) build
-
-prog_spi_debug:
-	@$(MAKE) prog
-
-selftest:
-	$(MAKE) -C tests selftest
-
-prog_selftest:
-	$(MAKE) -C tests prog_selftest
-
 clean:
 	rm -rf $(filename).json $(filename).blif $(filename).asc $(filename).bin
-	$(MAKE) -C tests clean

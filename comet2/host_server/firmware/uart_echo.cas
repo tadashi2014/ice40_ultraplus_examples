@@ -6,7 +6,7 @@ LOOP    IN      BUF,LEN
         OUT     BUF,LEN
         JUMP    LOOP
 
-BUF     DS      1
+BUF     DS      10
 LEN     DC      1
 
         END

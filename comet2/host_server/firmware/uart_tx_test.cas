@@ -5,9 +5,10 @@ MAIN    START
 LOOP    OUT     MSG,LEN
         JUMP    LOOP
 
-LEN     DC      7
+LEN     DC      10
 MSG     DC      'HELLO'
         DC      #000D
         DC      #000A
+        DC      #0000
 
         END

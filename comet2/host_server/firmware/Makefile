@@ -4,21 +4,24 @@ ASM = ../asm_tools/casl2_asm/casl2.py
 OBJ2BIN = ../asm_tools/obj2bin.py
 
 ALL_BINS = \
-	hanoi.bin \
+	led_red.bin \
 	uart_echo.bin \
 	uart_tx_test.bin \
 	uart_tx_mmio_test.bin \
 	uart_rx_mmio_echo.bin \
 	timer_mmio_uart_test.bin \
-	led_red.bin
+	hanoi.bin
 
 all: $(ALL_BINS)
 
-init.obj: init.cas
-	$(PYTHON) $(ASM) -x init.cas
+vector_uart.obj: vector_uart.cas
+	$(PYTHON) $(ASM) -x vector_uart.cas
 
-inout_uart.obj: inout_uart.cas
-	$(PYTHON) $(ASM) -x inout_uart.cas
+vector_spi.obj: vector_spi.cas
+	$(PYTHON) $(ASM) -x vector_spi.cas
+
+runtime_mmio.obj: runtime_mmio.cas
+	$(PYTHON) $(ASM) -x runtime_mmio.cas
 
 hanoi.obj: hanoi.cas
 	$(PYTHON) $(ASM) -x hanoi.cas
@@ -41,26 +44,26 @@ timer_mmio_uart_test.obj: timer_mmio_uart_test.cas
 led_red.obj: led_red.cas
 	$(PYTHON) $(ASM) -x led_red.cas
 
-hanoi.bin: init.obj hanoi.obj inout_uart.obj
-	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj hanoi.obj inout_uart.obj -o hanoi.bin
+hanoi.bin: vector_uart.obj hanoi.obj runtime_mmio.obj
+	$(PYTHON) $(OBJ2BIN) --no-runtime vector_uart.obj hanoi.obj runtime_mmio.obj -o hanoi.bin
 
-uart_echo.bin: init.obj uart_echo.obj inout_uart.obj
-	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj uart_echo.obj inout_uart.obj -o uart_echo.bin
+uart_echo.bin: vector_uart.obj uart_echo.obj runtime_mmio.obj
+	$(PYTHON) $(OBJ2BIN) --no-runtime vector_uart.obj uart_echo.obj runtime_mmio.obj -o uart_echo.bin
 
-uart_tx_test.bin: init.obj uart_tx_test.obj inout_uart.obj
-	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj uart_tx_test.obj inout_uart.obj -o uart_tx_test.bin
+uart_tx_test.bin: vector_uart.obj uart_tx_test.obj runtime_mmio.obj
+	$(PYTHON) $(OBJ2BIN) --no-runtime vector_uart.obj uart_tx_test.obj runtime_mmio.obj -o uart_tx_test.bin
 
-uart_tx_mmio_test.bin: init.obj uart_tx_mmio_test.obj
-	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj uart_tx_mmio_test.obj -o uart_tx_mmio_test.bin
+uart_tx_mmio_test.bin: vector_uart.obj uart_tx_mmio_test.obj runtime_mmio.obj
+	$(PYTHON) $(OBJ2BIN) --no-runtime vector_uart.obj uart_tx_mmio_test.obj  runtime_mmio.obj -o uart_tx_mmio_test.bin
 
-uart_rx_mmio_echo.bin: init.obj uart_rx_mmio_echo.obj
-	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj uart_rx_mmio_echo.obj -o uart_rx_mmio_echo.bin
+uart_rx_mmio_echo.bin: vector_uart.obj uart_rx_mmio_echo.obj runtime_mmio.obj
+	$(PYTHON) $(OBJ2BIN) --no-runtime vector_uart.obj uart_rx_mmio_echo.obj  runtime_mmio.obj -o uart_rx_mmio_echo.bin
 
-timer_mmio_uart_test.bin: init.obj timer_mmio_uart_test.obj
-	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj timer_mmio_uart_test.obj -o timer_mmio_uart_test.bin
+timer_mmio_uart_test.bin: vector_uart.obj timer_mmio_uart_test.obj runtime_mmio.obj
+	$(PYTHON) $(OBJ2BIN) --no-runtime vector_uart.obj timer_mmio_uart_test.obj  runtime_mmio.obj -o timer_mmio_uart_test.bin
 
-led_red.bin: init.obj led_red.obj
-	$(PYTHON) $(OBJ2BIN) --no-runtime init.obj led_red.obj -o led_red.bin
+led_red.bin: vector_uart.obj led_red.obj runtime_mmio.obj
+	$(PYTHON) $(OBJ2BIN) --no-runtime vector_uart.obj led_red.obj  runtime_mmio.obj -o led_red.bin
 
 clean:
 	rm -f *.obj *.exe *.bin *.words.txt
