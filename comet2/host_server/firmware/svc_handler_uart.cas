@@ -1,0 +1,152 @@
+; ==============================================================
+;
+; SVC 1 / SVC 2 handler implementation using UART MMIO
+;
+; UAINRW: UART Multi-character Input Handler (for SVC 1)
+;         Registered at vector address memory[0001].
+; UAOTRL: UART Multi-character Output Handler (for SVC 2)
+;         Registered at vector address memory[0002].
+;
+; *) The entry addresses for these routines are populated in the 
+;    interrupt vector table by the initializer (e.g., vector_uart.cas).
+;
+; COMET2 Control and Status Registers (MMIO)
+;   #F200 : Status Register
+;           bit 0: RX Ready (Data received)
+;           bit 1: TX Busy  (Transmission in progress)
+;           bit 2: RX Overflow Error
+;           bit 3: TX FIFO Full
+;   #F201 : RX Data Register (Read to pop one byte from buffer)
+;   #F202 : TX Data Register (Write low byte to initiate transmission)
+;   #F203 : Control Register (Write bit 0=1 to clear RX overflow)
+;
+; Macro Compatibility:
+;   Standard CASL2 IN/OUT macros pass arguments as follows:
+;     GR1 = Starting address of the buffer
+;     GR2 = Address of the word containing the character count
+;   Consequently, both handlers must first load the actual length 
+;   from the address pointed to by GR2 (e.g., LD GRx, 0,GR2).
+;  *) GR3 and GR4 are used as scratch areas.
+;
+; ==============================================================
+
+; UAOTRL: UART multi-character output handler.
+;         Registered at vector address memory[0002] for SVC 2.
+UAOTRL   START                   ; SVC 2 の UART 送信ハンドラ開始
+         PUSH    0,GR3           ; 退避: 送信文字保持に使う GR3 を保存
+         PUSH    0,GR4           ; 退避: 残り文字数カウンタに使う GR4 を保存
+         LD      GR4,0,GR2       ; GR4 <- 送信予定文字数（*GR2）
+UAOLOOP  CPL     GR4,=0          ; 残り文字数が 0 か確認
+         JZE     UAORET          ; 0 なら送信完了
+         LD      GR3,0,GR1       ; GR3 <- 現在の送信文字
+         AND     GR3,=#00FF      ; 下位 8bit のみを送信対象にする
+         JZE     UAORET          ; NUL 文字ならここで送信終了
+         CALL    UAOPUTC         ; 送信データを 1 文字出力する
+         SUBL    GR4,=1          ; 残り文字数を 1 減らす
+         ADDA    GR1,=1          ; バッファポインタを次の文字へ進める
+         JUMP    UAOLOOP         ; 次の文字の送信へ
+UAORET   LD      GR3,0,GR2       ; GR3 <- 元の送信要求文字数（*GR2）
+         SUBL    GR3,GR4         ; 実際に送った文字数 = 元の文字数 - 残り文字数
+         ST      GR3,0,GR2       ; *GR2 に実送信文字数を書き戻す
+         POP     GR4             ; GR4 を復帰
+         POP     GR3             ; GR3 を復帰
+         RET                     ; 呼び出し元へ戻る
+
+; UAOPUTC: UART single-character output handler.
+; GR3: 送信文字保持、MMIO レジスタの制御にも使う
+UAOPUTC  PUSH    0,GR3           ; 退避: MMIO レジスタの制御に使う GR4 を保存
+UPUTCBZ  LD      GR3,#F200       ; UART status レジスタを読む
+         AND     GR3,=2          ; bit1(TX busy) だけを取り出す
+         JNZ     UPUTCBZ         ; busy の間は空くまで待つ
+         POP     GR3             ; GR3 を復帰
+         ST      GR3,#F202       ; 文字を UART TX data レジスタへ書いて送信開始
+         RET
+
+; UAINRW: UART multi-character input handler.
+;         Registered at vector address memory[0002] for SVC 1.
+UAINRW   START                   ; SVC 1 の UART 受信ハンドラ開始
+         PUSH    0,GR3           ; 退避: 受信文字一時保持に使う GR3 を保存
+         PUSH    0,GR4           ; 退避: 受信文字数カウンタに使う GR4 を保存
+         XOR     GR4,GR4         ; GR4 <- 0、受信文字数を 0 で初期化
+UAINLP   CALL    UAIGETC         ; 受信データを 1 文字読む
+         AND     GR3,=#00FF      ; 下位 8bit の文字データだけ残す
+         CPL     GR3,=#000A      ; LF('\n') か判定
+         JZE     UAIRET          ; LF なら 1 行入力完了
+         CPL     GR3,=#000D      ; CR('\r') か判定
+         JZE     UAIRET          ; CR なら 1 行入力完了
+         CPL     GR3,=#0008      ; BS なら
+         JNZ     NXTCHK
+         SUBL    GR4,=1          ;   1 文字削除
+         CALL    UAOPUTC         ; 受信文字をエコーバックする
+         JUMP    UAINLP          ; 次の文字の受信へ戻る
+         CPL     GR3,=#007F      ; DEL なら
+         JNZ     NXTCHK
+         SUBL    GR4,=1          ;   1 文字削除
+         CALL    UAOPUTC         ; 受信文字をエコーバックする
+         JUMP    UAINLP          ; 次の文字の受信へ戻る
+NXTCHK   CPL     GR3,=#0004      ; Ctrl-D か判定
+         JNZ     UAISTR          ; Ctrl-D でなければ通常文字として保存へ
+         LD      GR4,=-1         ; Ctrl-D のときは EOF 相当として -1 を返す
+         JUMP    UAIRET          ; 受信終了処理へ
+UAISTR   ST      GR3,0,GR1       ; 受信文字を現在のバッファ位置へ保存
+         CALL    UAOPUTC         ; 受信文字をエコーバックする
+         ADDL    GR4,=1          ; 受信文字数を 1 増やす
+         ADDL    GR1,=1          ; バッファポインタを次の保存先へ進める
+         JUMP    UAINLP          ; 次の文字の受信へ戻る
+UAIRET   ST      GR4,0,GR2       ; *GR2 に受信文字数（または -1）を書き戻す
+         POP     GR4             ; GR4 を復帰
+         POP     GR3             ; GR3 を復帰
+         RET                     ; 呼び出し元へ戻る
+
+; UAIGETC: UART single-char input handler.
+; After reading the character it echoes it back through UART TX so the
+; user can see what they typed (terminal does not provide local echo).
+; GR3: 受信文字保持、MMIO レジスタの制御にも使う
+UAIGETC  LD      GR3,#F200       ; UART status レジスタを読む
+         AND     GR3,=1          ; bit0(RX ready) だけを取り出す
+         JZE     UAIGETC         ; 受信データが来るまで待つ
+         LD      GR3,#F201       ; 受信データを 1 文字読む
+         RET
+
+; ==============================================================
+; SWRST: software reset handler for SVC 0.
+; On entry (set by hardware):
+;   PR = memory[0000] = this routine
+;   SP = memory[001F] (stack pointer reloaded from vector table)
+; Jumps to the program entry point stored in RSTVEC.
+; RSTVEC is written by the vector initializer (vector_uart.cas /
+; vector_spi.cas) before the user program starts.
+; ==============================================================
+RSTVEC   START                   ; 再起動先アドレスを保持する 1 ワード領域
+         DS      1               ; 実アドレスは vector 初期化コードが書き込む
+
+SWRST    START                   ; SVC 0 用のソフトウェアリセット入口
+; GR0 cannot be used as an index register in CASL2.
+; Load the reset-vector address into GR1 and jump via GR1.
+; SWRST is a warm-reset handler so clobbering GR1 is acceptable.
+         LD      GR1,RSTVEC      ; GR1 <- 再起動先アドレス
+         JUMP    0,GR1           ; 再起動先へ分岐
+
+
+USLPRT   LD      GR4,GR0         ; 入力値を作業用 GR4 にコピー
+         LAD     GR1,0           ; GR1 <- 下位 16bit 部分の累積値
+         LAD     GR2,0           ; GR2 <- 上位側の繰り上がり回数
+         LAD     GR3,12          ; 12 回加算して擬似遅延値を作る
+USLP01   ADDL    GR1,GR4         ; GR1 += 入力値
+         JOV     USLP02          ; 桁あふれしたら上位カウンタ更新へ
+         JUMP    USLP03          ; あふれしなければそのままループ終端処理へ
+USLP02   ADDL    GR2,=1          ; 桁あふれ回数を 1 増やす
+USLP03   SUBA    GR3,=1          ; 残り反復回数を 1 減らす
+         JNZ     USLP01          ; まだ回数が残っていれば続ける
+         ST      GR1,#F302       ; 下位 16bit を timer MMIO の比較値下位へ書く
+         ST      GR2,#F304       ; 上位側を timer MMIO の比較値上位へ書く
+         LAD     GR5,#000C       ; タイマ制御値を用意
+         ST      GR5,#F305       ; タイマ設定を書き込む
+         LAD     GR5,1           ; タイマ開始トリガ値を用意
+         ST      GR5,#F305       ; タイマ開始
+USLP04   LD      GR5,#F300       ; タイマ status を読む
+         AND     GR5,=4          ; 完了ビットだけを見る
+         JZE     USLP04          ; 完了するまで待つ
+         LAD     GR0,0           ; 戻り値 0 を設定
+         RET                     ; 呼び出し元へ戻る
+         END                     ; モジュール終端

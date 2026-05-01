@@ -1,5 +1,4 @@
-; UART TX-only test for spi_debug build.
-; Repeatedly sends "HELLO\r\n" through SVC 2.
+; Repeatedly sends "HELLO\r\n" through OUT macro(SVC 2).
 
 MAIN    START
 LOOP    OUT     MSG,LEN

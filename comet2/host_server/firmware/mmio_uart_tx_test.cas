@@ -6,12 +6,6 @@ MAIN    START
 LOOP    OUT     MSG,LEN
         JUMP    LOOP
 
-;SVC1IN  START
-;        RET
-
-;SVC2OUT START
-;        RET
-
 LEN     DC      7
 MSG     DC      'HELLO'
         DC      #000D
