@@ -13,11 +13,13 @@
 
 #include <errno.h>
 #include <getopt.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include <termios.h>
 #include <unistd.h>
 
 #include "../../spi/spi_host/spi_lib.h"
@@ -33,6 +35,7 @@
 #define RX_BUFFER_SIZE        256u
 #define DEFAULT_IDLE_MS       200u
 #define BURST_WORDS           8u
+#define INPUT_LINE_MAX       1024u
 
 struct run_options {
    const char *firmware_path;
@@ -41,6 +44,8 @@ struct run_options {
    int use_burst;
    int probe_reload;
    int reload_safe;
+   int local_echo;
+   int echo_newline;
 };
 
 struct drain_report {
@@ -70,12 +75,59 @@ struct input_source {
    const char *text;
    size_t pos;
    int eof;
+   int eof_sent;
+   int local_echo;
+   int echo_newline;
+   uint8_t line[INPUT_LINE_MAX];
+   size_t line_len;
+   size_t line_pos;
 };
+
+static struct termios g_saved_term;
+static int            g_raw_mode = 0;
+
+static void restore_terminal(void)
+{
+   if (g_raw_mode) {
+      tcsetattr(STDIN_FILENO, TCSANOW, &g_saved_term);
+      g_raw_mode = 0;
+   }
+}
+
+static void sig_cleanup(int sig)
+{
+   (void)sig;
+   restore_terminal();
+   _exit(1);
+}
+
+static void setup_raw_mode(void)
+{
+   struct termios raw;
+
+   if (!isatty(STDIN_FILENO))
+      return;
+
+   if (tcgetattr(STDIN_FILENO, &g_saved_term) != 0)
+      return;
+
+   raw = g_saved_term;
+   cfmakeraw(&raw);
+   raw.c_oflag |= OPOST;
+
+   if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0)
+      return;
+
+   g_raw_mode = 1;
+   atexit(restore_terminal);
+   signal(SIGINT,  sig_cleanup);
+   signal(SIGTERM, sig_cleanup);
+}
 
 static void print_usage(const char *prog)
 {
    fprintf(stderr,
-           "Usage: %s [--burst] [--probe-reload] [--reload-safe] [-f firmware.bin] [-i input_text] [-t idle_ms]\n"
+           "Usage: %s [--burst] [--probe-reload] [--reload-safe] [--local-echo|--no-local-echo] [--echo-newline|--no-echo-newline] [-f firmware.bin] [-i input_text] [-t idle_ms]\n"
            "  -f firmware.bin : COMET II main memory image to load\n"
            "  -i input_text   : characters to supply to SVC 1 IN_REQUEST packets\n"
            "                    if omitted, stdin is read on demand\n"
@@ -85,6 +137,10 @@ static void print_usage(const char *prog)
            "  --probe-reload  : print bounded pre-INIT drain observations\n"
            "  --reload-safe   : drain stale SPI output before INIT using the\n"
            "                    conservative reload-safe path\n"
+           "  --local-echo    : echo interactive input locally (default: on)\n"
+           "  --no-local-echo : disable local echo of interactive input\n"
+           "  --echo-newline  : echo Enter locally when local echo is on (default: off)\n"
+           "  --no-echo-newline : suppress local echo for Enter\n"
            "Examples:\n"
             "  %s -f prog.bin -i \"12 3.5 Z hello\"\n"
             "  %s --burst -f prog.bin -i \"12 3.5 Z hello\"\n"
@@ -107,6 +163,10 @@ static int parse_args(int argc, char **argv, struct run_options *opts)
       {"burst", no_argument, NULL, 'b'},
       {"probe-reload", no_argument, NULL, 'p'},
       {"reload-safe", no_argument, NULL, 'r'},
+      {"local-echo", no_argument, NULL, 1000},
+      {"no-local-echo", no_argument, NULL, 1001},
+      {"echo-newline", no_argument, NULL, 1002},
+      {"no-echo-newline", no_argument, NULL, 1003},
       {0, 0, 0, 0}
    };
 
@@ -116,6 +176,8 @@ static int parse_args(int argc, char **argv, struct run_options *opts)
    opts->use_burst = 0;
    opts->probe_reload = 0;
    opts->reload_safe = 0;
+   opts->local_echo = 1;
+   opts->echo_newline = 0;
 
    while ((ch = getopt_long(argc, argv, "bprf:i:t:h", long_options, NULL)) != -1) {
       switch (ch) {
@@ -127,6 +189,18 @@ static int parse_args(int argc, char **argv, struct run_options *opts)
          break;
       case 'r':
          opts->reload_safe = 1;
+         break;
+      case 1000:
+         opts->local_echo = 1;
+         break;
+      case 1001:
+         opts->local_echo = 0;
+         break;
+      case 1002:
+         opts->echo_newline = 1;
+         break;
+      case 1003:
+         opts->echo_newline = 0;
          break;
       case 'f':
          opts->firmware_path = optarg;
@@ -409,26 +483,91 @@ static void rx_capture_push(struct rx_capture *capture, uint8_t ch)
  * return '\n' after the last one.  For stdin mode, call fgetc() (blocks
  * until a character or EOF is available) and return '\n' on EOF.
  */
-static uint8_t input_source_next(struct input_source *src)
+static int refill_interactive_line(struct input_source *src)
 {
-   if (src->text != NULL) {
-      if (src->text[src->pos] != '\0') {
-         return (uint8_t)src->text[src->pos++];
+   src->line_len = 0;
+   src->line_pos = 0;
+
+   if (src->eof) {
+      if (src->eof_sent) {
+         return -1;
       }
-      return '\n';   /* terminating newline after end of -i string */
+      src->line[0] = 0x04;
+      src->line_len = 1;
+      return 0;
    }
-   /* stdin: fgetc blocks until data (or EOF) – canonical mode buffers a
-    * whole line, so the first call blocks at the terminal and subsequent
-    * calls return the rest of the line immediately. */
-   if (!src->eof) {
+
+   for (;;) {
       int c = fgetc(stdin);
       if (c == EOF) {
          src->eof = 1;
-         return '\n';
+         if (g_raw_mode && src->local_echo && src->echo_newline) {
+            putchar('\n');
+            fflush(stdout);
+         }
+         src->line[0] = 0x04;
+         src->line_len = 1;
+         return 0;
       }
-      return (uint8_t)c;
+
+      if (c == '\r')
+         c = '\n';
+
+      if (g_raw_mode && (c == 0x08 || c == 0x7f)) {
+         if (src->line_len != 0) {
+            src->line_len--;
+            fputs("\b \b", stdout);
+            fflush(stdout);
+         }
+         continue;
+      }
+
+      if (c == 0x04) {
+         if (src->line_len == 0) {
+            src->line[0] = 0x04;
+            src->line_len = 1;
+            return 0;
+         }
+         c = '\n';
+      }
+
+      if (g_raw_mode && src->local_echo &&
+          (c != '\n' || src->echo_newline)) {
+         putchar(c);
+         fflush(stdout);
+      }
+
+      if (src->line_len < INPUT_LINE_MAX - 1) {
+         src->line[src->line_len++] = (uint8_t)c;
+      }
+
+      if (c == '\n') {
+         return 0;
+      }
    }
-   return '\n';   /* keep supplying '\n' after stdin EOF */
+}
+
+static int input_source_next(struct input_source *src)
+{
+   if (src->text != NULL) {
+      if (src->text[src->pos] != '\0') {
+         return (int)(uint8_t)src->text[src->pos++];
+      }
+      return '\n';   /* terminating newline after end of -i string */
+   }
+
+   if (src->line_pos >= src->line_len) {
+      if (refill_interactive_line(src) != 0) {
+         return -1;
+      }
+   }
+   {
+      uint8_t ch = src->line[src->line_pos++];
+      if (ch == 0x04) {
+         src->eof_sent = 1;
+      }
+      return (int)ch;
+   }
 }
 
 /*
@@ -459,9 +598,12 @@ static int run_io_loop(struct rx_capture *capture, struct input_source *src,
       }
 
       if (packet[0] == COMET_CMD_IN_REQUEST) {
-         uint8_t ch = input_source_next(src);
-         if (comet_send_in_char(ch) != 0) {
-            fprintf(stderr, "failed to send char 0x%02x\n", (unsigned int)ch);
+         int ch = input_source_next(src);
+         if (ch < 0) {
+            continue;
+         }
+         if (comet_send_in_char((uint8_t)ch) != 0) {
+            fprintf(stderr, "failed to send char 0x%02x\n", (unsigned int)(uint8_t)ch);
             return -1;
          }
          continue;
@@ -525,6 +667,8 @@ int main(int argc, char **argv)
       return 1;
    }
 
+   setup_raw_mode();
+
    if (load_and_start_comet_firmware(opts.firmware_path,
                                      opts.use_burst,
                                      opts.reload_safe,
@@ -535,15 +679,22 @@ int main(int argc, char **argv)
    src.text = opts.input_text;
    src.pos = 0;
    src.eof = 0;
+   src.eof_sent = 0;
+   src.local_echo = opts.local_echo;
+   src.echo_newline = opts.echo_newline;
+   src.line_len = 0;
+   src.line_pos = 0;
 
    if (opts.input_text != NULL) {
       fprintf(stderr, "sending input: %s\n", opts.input_text);
    }
 
    if (run_io_loop(&capture, &src, opts.idle_timeout_ms) != 0) {
+      restore_terminal();
       return 1;
    }
 
+   restore_terminal();
    print_capture_summary(&capture);
    return 0;
 }

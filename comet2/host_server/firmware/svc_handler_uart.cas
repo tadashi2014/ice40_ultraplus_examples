@@ -41,6 +41,8 @@ UAOLOOP  CPL     GR4,=0          ; 残り文字数が 0 か確認
          LD      GR3,0,GR1       ; GR3 <- 現在の送信文字
          AND     GR3,=#00FF      ; 下位 8bit のみを送信対象にする
          JZE     UAORET          ; NUL 文字ならここで送信終了
+         CPL     GR3,=#0004      ; EOF(Ctrl+D) か判定
+         JZE     UAORET          ; EOF なら送信終了
          CALL    UAOPUTC         ; 送信データを 1 文字出力する
          SUBL    GR4,=1          ; 残り文字数を 1 減らす
          ADDA    GR1,=1          ; バッファポインタを次の文字へ進める
@@ -48,7 +50,7 @@ UAOLOOP  CPL     GR4,=0          ; 残り文字数が 0 か確認
 UAORET   LD      GR3,0,GR2       ; GR3 <- 元の送信要求文字数（*GR2）
          SUBL    GR3,GR4         ; 実際に送った文字数 = 元の文字数 - 残り文字数
          ST      GR3,0,GR2       ; *GR2 に実送信文字数を書き戻す
-         POP     GR4             ; GR4 を復帰
+UAORET    POP     GR4             ; GR4 を復帰
          POP     GR3             ; GR3 を復帰
          RET                     ; 呼び出し元へ戻る
 
@@ -63,36 +65,41 @@ UPUTCBZ  LD      GR3,#F200       ; UART status レジスタを読む
          RET
 
 ; UAINRW: UART multi-character input handler.
-;         Registered at vector address memory[0002] for SVC 1.
+;         Registered at vector address memory[0001] for SVC 1.
 UAINRW   START                   ; SVC 1 の UART 受信ハンドラ開始
          PUSH    0,GR3           ; 退避: 受信文字一時保持に使う GR3 を保存
          PUSH    0,GR4           ; 退避: 受信文字数カウンタに使う GR4 を保存
          XOR     GR4,GR4         ; GR4 <- 0、受信文字数を 0 で初期化
+
 UAINLP   CALL    UAIGETC         ; 受信データを 1 文字読む
-         AND     GR3,=#00FF      ; 下位 8bit の文字データだけ残す
+
          CPL     GR3,=#000A      ; LF('\n') か判定
          JZE     UAIRET          ; LF なら 1 行入力完了
          CPL     GR3,=#000D      ; CR('\r') か判定
          JZE     UAIRET          ; CR なら 1 行入力完了
-         CPL     GR3,=#0008      ; BS なら
-         JNZ     NXTCHK
-         SUBL    GR4,=1          ;   1 文字削除
-         CALL    UAOPUTC         ; 受信文字をエコーバックする
+
+         CPL     GR3,=#0008      ; BS なら DELCHARにジャンプ
+         JZE     DELCHR          ;   1 文字削除処理にジャンプ
+         CPL     GR3,=#007F      ; DEL でないなら UAISTRにジャンプ
+         JNZ     UAISTR          ;   1 文字受信処理にジャンプ
+DELCHR   CALL    UAOPUTC         ; 受信文字をエコーバックする（カーソルを１文字戻す）
+         LD      GR3,=#0020      ; １つ前の入力文字を空白文字で上書きする
+         CALL    UAOPUTC         ;
+         LD      GR3,=#0008      ; カーソルを１文字戻す
+         CALL    UAOPUTC         ;
+         SUBL    GR4,=1          ; 受信文字数を 1 減らす
+         SUBL    GR1,=1          ; バッファポインタを一つ前の保存先へ戻す
          JUMP    UAINLP          ; 次の文字の受信へ戻る
-         CPL     GR3,=#007F      ; DEL なら
-         JNZ     NXTCHK
-         SUBL    GR4,=1          ;   1 文字削除
-         CALL    UAOPUTC         ; 受信文字をエコーバックする
-         JUMP    UAINLP          ; 次の文字の受信へ戻る
-NXTCHK   CPL     GR3,=#0004      ; Ctrl-D か判定
-         JNZ     UAISTR          ; Ctrl-D でなければ通常文字として保存へ
-         LD      GR4,=-1         ; Ctrl-D のときは EOF 相当として -1 を返す
-         JUMP    UAIRET          ; 受信終了処理へ
+
 UAISTR   ST      GR3,0,GR1       ; 受信文字を現在のバッファ位置へ保存
+         CPL     GR3,=#0004      ; Ctrl-D か判定
+         JZE     FOUNDEOF        ; Ctrl-D を検知
          CALL    UAOPUTC         ; 受信文字をエコーバックする
          ADDL    GR4,=1          ; 受信文字数を 1 増やす
          ADDL    GR1,=1          ; バッファポインタを次の保存先へ進める
          JUMP    UAINLP          ; 次の文字の受信へ戻る
+
+FOUNDEOF LD      GR4,=-1         ; Ctrl-D のときは EOF 相当として -1 を返す
 UAIRET   ST      GR4,0,GR2       ; *GR2 に受信文字数（または -1）を書き戻す
          POP     GR4             ; GR4 を復帰
          POP     GR3             ; GR3 を復帰
@@ -106,6 +113,7 @@ UAIGETC  LD      GR3,#F200       ; UART status レジスタを読む
          AND     GR3,=1          ; bit0(RX ready) だけを取り出す
          JZE     UAIGETC         ; 受信データが来るまで待つ
          LD      GR3,#F201       ; 受信データを 1 文字読む
+         AND     GR3,=#00FF      ; 下位 8bit の文字データだけ残す
          RET
 
 ; ==============================================================

@@ -5,7 +5,7 @@
 ; Calling convention (compliant with standard IN/OUT macros):
 ; GR1 = starting address of I/O buffer
 ; GR2 = address of data area holding I/O data length
-; GR3, GR4 and GR5 are used as scratch areas.
+; GR3 and GR4 are used as scratch areas.
 ; ==============================================================
 
 ; ==============================================================
@@ -21,80 +21,98 @@
 ; SPOTRL: SPI line/buffer output handler.
 ; Installed at memory[0002] for SVC 2.
 SPOTRL   START                   ; SVC 2 の SPI 送信ハンドラ開始
-         PUSH    0,GR4           ; 退避: 残り文字数カウンタ用
          PUSH    0,GR3           ; 退避: 送信文字保持用
-         PUSH    0,GR5           ; 退避: MMIO レジスタの制御に使う GR5 を保存
+         PUSH    0,GR4           ; 退避: 残り文字数カウンタ用
          LD      GR4,0,GR2       ; GR4 <- 送信予定文字数（*GR2）
 SPOLLP   CPL     GR4,=0          ; 残り文字数が 0 か確認
          JZE     SPORET          ; 0 なら送信完了
          LD      GR3,0,GR1       ; GR3 <- 現在の送信文字
          AND     GR3,=#00FF      ; 下位 8bit のみを送信対象にする
          JZE     SPORET          ; NUL 文字ならここで送信終了
-SPOLBZ   LD      GR5,#F000       ; SPI status レジスタを読む
-         AND     GR5,=2          ; bit1(TX full) だけを取り出す
-         JNZ     SPOLBZ          ; 送信バッファに空きができるまで待つ
-         SLL     GR3,8           ; 文字を [15:8] に配置
-         OR      GR3,=#0020      ; OPOUT opcode(#0020) を付与
-         ST      GR3,#F004       ; TX low word = {char, OPOUT}
-         LAD     GR5,0           ; TX high word は常に 0
-         ST      GR5,#F005       ; 高位書き込みで送信をトリガ
+         CPL     GR3,=#0004      ; EOF(Ctrl+D) か判定
+         JZE     SPORET          ; EOF なら送信終了
+         CALL    SPOPUTC
          SUBL    GR4,=1          ; 残り文字数を 1 減らす
          ADDA    GR1,=1          ; バッファポインタを次の文字へ進める
          JUMP    SPOLLP          ; 次の文字の送信へ
 SPORET   LD      GR3,0,GR2       ; GR3 <- 元の送信要求文字数（*GR2）
          SUBL    GR3,GR4         ; 実際に送った文字数 = 元の文字数 - 残り文字数
          ST      GR3,0,GR2       ; *GR2 に実送信文字数を書き戻す
-         POP     GR5             ; GR5 を復帰
+SPORET   POP     GR4             ; GR4 を復帰
          POP     GR3             ; GR3 を復帰
-         POP     GR4             ; GR4 を復帰
          RET                     ; 呼び出し元へ戻る
+
+; SPOPUTC: SPI single-character output handler.
+; GR3: 送信文字保持、MMIO レジスタの制御にも使う
+SPOPUTC  PUSH    0,GR3           ; 退避: MMIO レジスタの制御に使う GR3 を保存
+SPUTCBZ  LD      GR3,#F000       ; SPI status レジスタを読む
+         AND     GR3,=2          ; bit1(TX full) だけを取り出す
+         JNZ     SPUTCBZ         ; busy の間は空くまで待つ
+         POP     GR3             ; GR3 を復帰
+         SLL     GR3,8           ; 文字を [15:8] に配置
+         OR      GR3,=#0020      ; OPOUT opcode(#0020) を付与
+         ST      GR3,#F004       ; TX low word = {char, OPOUT}
+         XOR     GR3,GR3         ; TX high word は常に 0
+         ST      GR3,#F005       ; 高位書き込みで送信をトリガ
+         RET
 
 ; SPINRW: SPI line input handler.
 ; Installed at memory[0001] for SVC 1.
 ; Host に 1 文字ずつ入力要求を送り、LF/CR までの 1 行を受信する。
 SPINRW   START                   ; SVC 1 の SPI 受信ハンドラ開始
-         PUSH    0,GR5           ; 退避: MMIO レジスタの制御に使う GR5 を保存
-         PUSH    0,GR4           ; 退避: 受信文字一時保持に使う GR4 を保存
-         PUSH    0,GR3           ; 退避: 受信文字数カウンタに使う GR3 を保存
-         XOR     GR3,GR3         ; GR3 <- 0、受信文字数を 0 で初期化
-SPINRQ   LD      GR5,#F000       ; SPI status レジスタを読む
-         AND     GR5,=2          ; bit1(TX full) だけを取り出す
-         JNZ     SPINRQ          ; 入力要求パケットを送れるまで待つ
-         LAD     GR5,#0030       ; IN_REQUEST opcode(#0030) を用意
-         ST      GR5,#F004       ; TX low word に opcode を書く
-         LAD     GR5,0           ; TX high word は 0
-         ST      GR5,#F005       ; 高位書き込みでホストへ入力要求送信
-SPINLP   LD      GR4,#F000       ; SPI status レジスタを読む
-         AND     GR4,=1          ; bit0(RX ready) だけを取り出す
-         JZE     SPINLP          ; ホストから応答が来るまで待つ
-         LD      GR4,#F001       ; RX low word を読む
-         AND     GR4,=#00FF      ; opcode バイトだけ取り出す
-         CPL     GR4,=#0010      ; OPIN opcode(#0010) か判定
-         JNZ     SPINDR          ; 想定外パケットなら ack して破棄
-         LD      GR4,#F002       ; RX high word から文字を読む
-         AND     GR4,=#00FF      ; 下位 8bit の文字データだけ残す
-         LAD     GR5,1           ; RX ack 値を用意
-         ST      GR5,#F003       ; 受信済みとして ack
-         CPL     GR4,=#000A      ; LF('\n') か判定
+         PUSH    0,GR3           ; 退避: 受信文字一時保持に使う GR3 を保存
+         PUSH    0,GR4           ; 退避: 受信文字数カウンタに使う GR4 を保存
+         XOR     GR4,GR4         ; GR4 <- 0、受信文字数を 0 で初期化
+
+SPINLP   CALL    SPIGETC
+
+         CPL     GR3,=#000A      ; LF('\n') か判定
          JZE     SPIRET          ; LF なら 1 行入力完了
-         CPL     GR4,=#000D      ; CR('\r') か判定
+         CPL     GR3,=#000D      ; CR('\r') か判定
          JZE     SPIRET          ; CR なら 1 行入力完了
-         CPL     GR4,=#0004      ; Ctrl-D か判定
-         JNZ     SPISTR          ; Ctrl-D でなければ通常文字として保存へ
-         LD      GR3,=-1         ; Ctrl-D のときは EOF 相当として -1 を返す
-         JUMP    SPIRET          ; 受信終了処理へ
-SPISTR   ST      GR4,0,GR1       ; 受信文字を現在のバッファ位置へ保存
-         ADDL    GR3,=1          ; 受信文字数を 1 増やす
+
+SPISTR   ST      GR3,0,GR1       ; 受信文字を現在のバッファ位置へ保存
+         CPL     GR3,=#0004      ; Ctrl-D か判定
+         JZE     FOUNDEOF        ; Ctrl-D を検知
+         ADDL    GR4,=1          ; 受信文字数を 1 増やす
          ADDL    GR1,=1          ; バッファポインタを次の保存先へ進める
-         JUMP    SPINRQ          ; 次の 1 文字要求へ戻る
-SPINDR   LAD     GR5,1           ; 不正パケット用の ack 値を用意
-         ST      GR5,#F003       ; 想定外パケットも ack して FIFO を進める
-         JUMP    SPINLP          ; 次の受信パケットを待つ
-SPIRET   ST      GR3,0,GR2       ; *GR2 に受信文字数（または -1）を書き戻す
-         POP     GR3             ; GR3 を復帰
+         JUMP    SPINLP          ; 次の 1 文字要求へ戻る
+
+FOUNDEOF LD      GR4,=-1         ; Ctrl-D のときは EOF 相当として -1 を返す
+SPIRET   ST      GR4,0,GR2       ; *GR2 に受信文字数（または -1）を書き戻す
          POP     GR4             ; GR4 を復帰
-         POP     GR5             ; GR5 を復帰
+         POP     GR3             ; GR3 を復帰
          RET                     ; 呼び出し元へ戻る
+
+; SPIGETC: SPI single-char input handler.
+; GR3: 受信文字保持、MMIO レジスタの制御にも使う
+SPIGETC  LD      GR3,#F000       ; SPI status レジスタを読む
+         AND     GR3,=2          ; bit1(TX full) だけを取り出す
+         JNZ     SPIGETC         ; 入力要求パケットを送れるまで待つ
+         LAD     GR3,#0030       ; IN_REQUEST opcode(#0030) を用意
+         ST      GR3,#F004       ; TX low word に opcode を書く
+         LAD     GR3,0           ; TX high word は 0
+         ST      GR3,#F005       ; 高位書き込みでホストへ入力要求送信
+
+SPINRTRY LD      GR3,#F000       ; SPI status レジスタを読む
+         AND     GR3,=1          ; bit0(RX ready) だけを取り出す
+         JZE     SPINRTRY        ; ホストから応答が来るまで待つ
+         LD      GR3,#F001       ; RX low word を読む
+         AND     GR3,=#00FF      ; opcode バイトだけ取り出す
+         CPL     GR3,=#0010      ; OPIN opcode(#0010) か判定
+         JZE     SPINRD          ; 正しいパケットならデータを取得
+                                 ; 想定外パケットなら ack して破棄
+         LAD     GR3,1           ; 不正パケット用の ack 値を用意
+         ST      GR3,#F003       ; 想定外パケットも ack して FIFO を進める
+         JUMP    SPINRTRY        ; 次の受信パケットを待つ
+
+SPINRD   LD      GR3,#F002       ; RX high word から文字を読む
+         AND     GR3,=#00FF      ; 下位 8bit の文字データだけ残す
+         PUSH    0,GR3           ; MMIO spi制御のために GR3 を一時退避
+         LAD     GR3,1           ; RX ack 値を用意
+         ST      GR3,#F003       ; 受信済みとして ack
+         POP     GR3             ; GR3 を復帰
+         RET
 
 ; ==============================================================
 ; SWRST: software reset handler for SVC 0.
