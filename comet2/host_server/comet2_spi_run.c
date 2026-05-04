@@ -138,6 +138,10 @@ static void setup_raw_mode(void)
 
    raw = g_saved_term;
    cfmakeraw(&raw);
+   /* Keep VINTR/Ctrl-C as a real signal so continuous firmware output
+    * can still be interrupted even when the host loop is not polling
+    * stdin for characters. */
+   raw.c_lflag |= ISIG;
    /* Keep output post-processing so '\n' still becomes '\r\n'. */
    raw.c_oflag |= OPOST;
 
