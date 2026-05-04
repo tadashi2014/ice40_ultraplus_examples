@@ -55,9 +55,10 @@ horizontal orientation.
 
 ### Versions used
 
-- icestorm suite (git sha1 9f66f9ce16941c)
-- yosys 0.15
-- nextpnr-ice40 0.2
-- gcc version 5.4.0  
+oss-cad-suite-darwin-arm64-20260503
+- iceprog
+- yosys: Yosys 0.64+176
+- nextpnr-ice40: nextpnr-0.10-51-gec1b3fde
+- gcc version: Apple clang version 21.0.0
 
-Built on Linux Mint 20.0
+Built on macOS Tahoe 26.4.1

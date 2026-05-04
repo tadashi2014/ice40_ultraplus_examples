@@ -1,26 +1,22 @@
 # iCE40up5K_comet2
 
 COMET II soft CPU for the Lattice iCE40 UltraPlus Breakout Board.
+COMET II was a virtual CPU formerly created by IPA (https://www.ipa.go.jp) for qualification exams.
 
-This README lives under `COMET2_HW/comet2/`, the hardware example area for the
+This README lives under `comet2/`, the hardware example area for the
 Lattice iCE40 UltraPlus Breakout Board in this repository.
 
 This directory contains the COMET II implementation that was split out from the
 mixed `riscv/` tree so the RISC-V and COMET II flows can be maintained
 independently.
 
-For repeated firmware-download work, see
-[`RELOAD_REDESIGN.md`](RELOAD_REDESIGN.md).
-
 ## Layout
 
 - `top.v`: default SPI loader + UART console top
-- `tests/`: legacy SPI top, timer debug top, and self-test top/ROM
 - `comet2_cpu/`: COMET II core, 16-bit memory, and CASL/sample support files
 - `host_server/`: generic SPI loader for COMET II `.bin`
 - `host_server/asm_tools/`: CASL2 assembler, linker, and obj2bin
 - `host_server/firmware/`: CASL2 sample sources, generated `.bin`, and build `Makefile`
-- `tests/host_server/`: legacy SPI IN/OUT echo utility and paired SPI debug firmware
 
 ## Build
 
@@ -34,37 +30,6 @@ make prog
 ```
 
 This now builds the SPI loader + UART console top.
-
-### Legacy SPI-only bitstream
-
-```sh
-cd comet2
-make clean spi
-make prog_spi
-```
-
-The `spi`, `debug`, and `selftest` targets are built from files under
-[`tests/`](tests/).
-
-### Self-test bitstream
-
-```sh
-cd comet2
-make clean selftest
-make prog_selftest
-```
-
-### SPI loader / UART console test
-
-```sh
-cd comet2
-make clean
-make
-make prog
-cd tests/host_server
-make
-./comet2_inout_host
-```
 
 ### CPU unit test
 
@@ -188,14 +153,6 @@ The current defaults differ slightly:
 
 `comet2_spi_run` still supports `-e <ms>` to tune the post-EOF drain window for
 non-interactive EOF cases.
-
-Optional input bytes can be sent through `SVC 1`.
-
-```sh
-cd tests/host_server
-make
-./comet2_inout_host "HELLO\n"
-```
 
 The host collects bytes produced by `SVC 2` into a 256-byte receive buffer. If
 the program outputs more than that, excess bytes are drained from SPI and
