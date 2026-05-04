@@ -6,12 +6,12 @@ LOOP    LAD     GR1,MSG
         LD      GR2,LEN
 
 SEND    LD      GR3,#F200
-        AND     GR3,TXBUSY
+        AND     GR3,=2
         JNZ     SEND
         LD      GR3,0,GR1
         ST      GR3,#F202
         LAD     GR1,1,GR1
-        SUBA    GR2,ONE
+        SUBA    GR2,=1
         JNZ     SEND
         JUMP    LOOP
 

@@ -13,7 +13,7 @@
 
    //byte2 | byte1 | byte0 | opcode/status
 */
-`include "../spi/spi_slave.v"
+`include "spi_slave.v"
 
 module spi_mm(input wire clk, input wire reset,
       input wire SPI_SCK, input wire SPI_SS, input wire SPI_MOSI, output wire SPI_MISO,

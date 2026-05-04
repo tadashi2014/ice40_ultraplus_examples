@@ -1,1 +1,48 @@
-../vector_uart.cas
+; vector_uart.cas: UART I/O vector table initializer.
+;
+; Hardware memory map (on cold reset):
+;   memory[0000] = initial PC (reset vector) = address of VSINIT
+;   memory[0001] = SVC 1 handler address     = UAINRW (UART single-char input)
+;   memory[0002] = SVC 2 handler address     = UAOTRL (UART single-char output)
+;   memory[0003..001e] = reserved (DS 28)
+;   memory[001f] = initial SP = #EFF0
+;
+; Boot sequence:
+;   1. Cold reset: CPU reads memory[0000]=VSINIT, loads SP=memory[001f]=#EFF0,
+;      jumps to VSINIT (at address 0x0020).
+;   2. VSINIT: installs SWRST at memory[0000] (for future SVC 0 warm resets),
+;      stores MAIN in RSTVEC, jumps to MAIN.
+;   3. SVC 0 (warm reset): CPU reads memory[0000]=SWRST, jumps to SWRST.
+;      SWRST reads RSTVEC=MAIN and jumps to MAIN.
+;
+; Build selection:
+;   UART build: prepend this file  (IO_VARIANT=uart)
+;   SPI  build: prepend vector_spi.cas instead (IO_VARIANT=spi)
+;
+; Merge procedure (in verify_samples.sh / build script):
+;   1. vector_uart.cas  -> keep its START directive (new binary entry)
+;   2. user program .cas -> replace its START with NOP
+;   3. runtime.cas      -> replace its START with NOP
+;   4. Append a single END
+
+VSTART   START
+; --- Hardware vector table (addresses 0x0000..0x001f) ---
+         DC      VSINIT        ; [0000] cold-reset PC -> VSINIT init code at 0x0020
+         DC      UAINRW        ; [0001] SVC 1 handler -> UART single-char input
+         DC      UAOTRL        ; [0002] SVC 2 handler -> UART single-char output
+         DS      28            ; [0003..001e] reserved
+         DC      #EFF0         ; [001f] initial SP
+
+; --- VSINIT: cold-reset initialization (at address 0x0020) ---
+; Executed exactly once on power-on. Installs SWRST as the SVC 0
+; warm-reset handler, records MAIN in RSTVEC so SWRST can restart
+; the user program, then transfers control to MAIN.
+; GR0 is clobbered here; MAIN re-initialises GR6/GR7 before calling CMAIN.
+VSINIT   NOP
+         LAD     GR0,SWRST
+         ST      GR0,0          ; memory[0000] <- SWRST (SVC 0 warm-reset handler)
+         LAD     GR0,MAIN
+         ST      GR0,RSTVEC     ; RSTVEC <- MAIN (restart target for SWRST)
+         JUMP    MAIN           ; start user program
+
+         END

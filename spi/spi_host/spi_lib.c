@@ -4,6 +4,9 @@
 #include "spi_lib.h"
 
 static struct ftdi_context ftdic;
+static int ftdic_open = 0; //false
+static int verbose = 0; //false
+static int ftdic_latency_set = 0; //false
 static unsigned char ftdi_latency;
 
 static void send_byte(uint8_t data)
@@ -58,10 +61,6 @@ static uint8_t xfer_spi_bits(uint8_t data, int n)
   send_byte(n - 1);
   send_byte(data);
 
-  /* Flush the FTDI receive buffer immediately so we don't wait for the 1 ms
-   * latency timer.  Without this each SPI call stalls up to 1 ms. */
-  send_byte(MC_FLUSH);
-
   return recv_byte();
 }
 
@@ -80,10 +79,6 @@ static void xfer_spi(uint8_t *data, int n)
      fprintf(stderr, "Write error (chunk, rc=%d, expected %d).\n", rc, n);
      exit(2);
   }
-
-  /* Flush the FTDI receive buffer immediately so we don't wait for the 1 ms
-   * latency timer.  Without this each SPI call stalls up to 1 ms. */
-  send_byte(MC_FLUSH);
 
   for (int i = 0; i < n; i++)
      data[i] = recv_byte();
@@ -137,22 +132,24 @@ int spi_init()
    enum ftdi_interface ifnum = INTERFACE_A;
    int status = 0;
 
+   printf("init..\n");
+
    status = ftdi_init(&ftdic);
 	if( status != 0)
    {
-      fprintf(stderr, "couldn't initialize ftdi\n");
+      printf("couldn't initalize ftdi\n");
       return 1;
    }
 
 	status = ftdi_set_interface(&ftdic, ifnum);
    if(status != 0)
    {
-      fprintf(stderr, "couldn't initialize ftdi interface\n");
+      printf("couldn't initalize ftdi interface\n");
       return 1;
    }
 
    if (ftdi_usb_open(&ftdic, 0x0403, 0x6010) && ftdi_usb_open(&ftdic, 0x0403, 0x6014)) {
-		fprintf(stderr, "Can't find iCE FTDI USB device (vendor_id 0x0403, device_id 0x6010 or 0x6014).\n");
+		printf("Can't find iCE FTDI USB device (vendor_id 0x0403, device_id 0x6010 or 0x6014).\n");
 		return 1;
 	}
 
@@ -176,6 +173,8 @@ int spi_init()
 		fprintf(stderr, "Failed to set latency timer (%s).\n", ftdi_get_error_string(&ftdic));
 		return 1;
 	}
+
+	// ftdic_latency_set = 1;
 
 	/* Enter MPSSE (Multi-Protocol Synchronous Serial Engine) mode. Set all pins to output. */
 	if (ftdi_set_bitmode(&ftdic, 0xff, BITMODE_MPSSE) < 0) {
@@ -207,6 +206,7 @@ int spi_send(uint8_t cmd, uint8_t val[3], uint8_t *status)
    uint32_t retries = 0;
 
    do{
+      // usleep(2);
       xfer_spi(to_send, 4);
       status_recv = to_send[0];
       retries++;
@@ -229,62 +229,12 @@ int spi_send24b(uint8_t cmd, uint32_t val24b, uint8_t *status){
    return spi_send(cmd, param, status);
 }
 
-int spi_send_batch_packets(const uint8_t *packets, size_t packet_count, uint8_t *last_status)
-{
-   size_t i;
-   size_t bytes;
-   uint8_t *txrx;
-
-   if (packet_count == 0) {
-      if (last_status != NULL) {
-         *last_status = 0;
-      }
-      return 0;
-   }
-
-   bytes = packet_count * 4u;
-   txrx = (uint8_t *)malloc(bytes);
-   if (txrx == NULL) {
-      fprintf(stderr, "out of memory while preparing SPI batch transfer.\n");
-      return 1;
-   }
-
-   for (i = 0; i < bytes; i++) {
-      txrx[i] = packets[i];
-   }
-
-   xfer_spi(txrx, (int)bytes);
-
-   for (i = 0; i < packet_count; i++) {
-      uint8_t status = txrx[i * 4u];
-      if ((status & STATUS_FPGA_RECV_MASK) == 0) {
-         if (last_status != NULL) {
-            *last_status = status;
-         }
-         free(txrx);
-         return 1;
-      }
-   }
-
-   if (last_status != NULL) {
-      *last_status = txrx[(packet_count - 1u) * 4u];
-   }
-
-   free(txrx);
-   return 0;
-}
-
 int spi_read(uint8_t val[3], uint8_t *status)
 {
    uint8_t nop_command[] = {0x00, 0x00, 0x00, 0x00}; //nop
    uint8_t status_recv = 0;
    uint32_t retries = 0;
-   /* With MC_FLUSH in xfer_spi() each call takes ~0.2 ms (USB round-trip).
-    * 50 retries × 0.2 ms ≈ 10 ms maximum wait.  If the FPGA hasn't sent
-    * data within 10 ms the caller can try again; nothing is lost because
-    * the FPGA holds the data until it is read.  Reducing this from the
-    * original 1000 (≈ 1 s) keeps the interactive I/O loop responsive. */
-   uint32_t max_retries = 50;
+   uint32_t max_retries = 1000;
 
    do{
       usleep(2);

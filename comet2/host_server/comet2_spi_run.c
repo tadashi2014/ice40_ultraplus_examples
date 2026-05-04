@@ -32,7 +32,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-#include "../../spi/spi_host/spi_lib.h"
+#include "spi_lib.h"
 
 /* ------------------------------------------------------------------ */
 /* SPI opcodes                                                          */

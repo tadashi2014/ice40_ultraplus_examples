@@ -3,7 +3,7 @@ FTDI_PKG := $(shell pkg-config --exists libftdi1 2>/dev/null && echo libftdi1 ||
 CFLAGS  += $(shell pkg-config --cflags $(FTDI_PKG) 2>/dev/null)
 LIBS    += $(shell pkg-config --libs   $(FTDI_PKG) 2>/dev/null || echo -lftdi)
 
-SPI_LIB_SRC = ../../spi/spi_host/spi_lib.c
+SPI_LIB_SRC = spi_lib.c
 TARGETS = comet2_spi_loader comet2_spi_run
 
 all: $(TARGETS)

@@ -22,7 +22,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-#include "../../spi/spi_host/spi_lib.h"
+#include "spi_lib.h"
 
 #define SPI_INIT              0x01
 #define SPI_SEND_FIRMWARE     0x02

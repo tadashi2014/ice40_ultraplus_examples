@@ -25,6 +25,10 @@ module spi_slave(input wire clk, input wire reset,
 
    reg buffer_rd_ack = 0;
    reg [31:0] rd_data_local = 0;
+   reg [31:0] rx_fifo [0:7];
+   reg [2:0] rx_fifo_wr_ptr = 0;
+   reg [2:0] rx_fifo_rd_ptr = 0;
+   reg [3:0] rx_fifo_count = 0;
 
    //states
    parameter IDLE = 0, INIT=IDLE+1, RD_WAIT_DATA=INIT+1, RD_WAIT_ACK=RD_WAIT_DATA+1, WR_WAIT_DATA=RD_WAIT_ACK+1, WR_WAIT_ACK=WR_WAIT_DATA+1;
@@ -52,6 +56,9 @@ module spi_slave(input wire clk, input wire reset,
       buffer_rd_ack = 0;
       rd_data = 0;
       rd_data_local = 0;
+      rx_fifo_wr_ptr = 0;
+      rx_fifo_rd_ptr = 0;
+      rx_fifo_count = 0;
 
       rd_data_available = 0;
    end
@@ -65,6 +72,9 @@ module spi_slave(input wire clk, input wire reset,
          rd_data_local <= 0;
          rd_data_available <= 0;
          buffer_rd_ack <= 0;
+         rx_fifo_wr_ptr <= 0;
+         rx_fifo_rd_ptr <= 0;
+         rx_fifo_count <= 0;
          state_rd <= INIT;
          counter_read <= 0;
          spi_clk_reg <= 0;
@@ -99,8 +109,22 @@ module spi_slave(input wire clk, input wire reset,
                end
 
                if(counter_read >= 31) begin //finish recv
-                  if(rd_data_local[8:1] == 8'h1) begin //received init opcode
+                  if(rd_data_local[8:1] == 8'h1 && rx_fifo_count < 8) begin //received init opcode
                      state_rd <= RD_WAIT_DATA;
+                     // Start a fresh session on INIT. Old host-visible output
+                     // packets from the previous run would otherwise leak into
+                     // the next SPI transaction and corrupt the observed
+                     // status byte during firmware reload.
+                     wr_reg_full <= 0;
+                     wr_data_reg <= 24'h0;
+                     wr_queue_full <= 0;
+                     wr_data_queue <= 24'h0;
+                     rx_fifo_wr_ptr <= 0;
+                     rx_fifo_rd_ptr <= 0;
+                     rx_fifo_count <= 0;
+                     rx_fifo[0] <= {mosi_reg[0], rd_data_local[31:1]};
+                     rx_fifo_wr_ptr <= 1;
+                     rx_fifo_count <= 1;
                      rd_data <= {mosi_reg[0], rd_data_local[31:1]};
                      rd_data_available <= 1;
                   end
@@ -132,9 +156,29 @@ module spi_slave(input wire clk, input wire reset,
                      wr_data_reg <= 24'h00;
                   end
 
-                  if(rd_data_available == 0) begin
-                     rd_data_available <= 1;
+                  if (rd_data_local[8:1] == 8'h01) begin
+                     // INIT starts a new loader session. Flush any queued
+                     // host-bound output and stale host commands from the
+                     // previous run, then present only the INIT packet to
+                     // spi_mm.
+                     wr_reg_full <= 0;
+                     wr_data_reg <= 24'h0;
+                     wr_queue_full <= 0;
+                     wr_data_queue <= 24'h0;
+                     rx_fifo_wr_ptr <= 0;
+                     rx_fifo_rd_ptr <= 0;
+                     rx_fifo_count <= 1;
+                     rx_fifo[0] <= {mosi_reg[0], rd_data_local[31:1]};
                      rd_data <= {mosi_reg[0], rd_data_local[31:1]};
+                     rd_data_available <= 1;
+                  end else if(rx_fifo_count < 8) begin
+                     rx_fifo[rx_fifo_wr_ptr] <= {mosi_reg[0], rd_data_local[31:1]};
+                     rx_fifo_wr_ptr <= rx_fifo_wr_ptr + 1'b1;
+                     rx_fifo_count <= rx_fifo_count + 1'b1;
+                     if(rd_data_available == 0) begin
+                        rd_data <= {mosi_reg[0], rd_data_local[31:1]};
+                     end
+                     rd_data_available <= 1;
                   end
                   state_rd <= RD_WAIT_DATA;
                   counter_read <= 0;
@@ -145,23 +189,31 @@ module spi_slave(input wire clk, input wire reset,
          end
          endcase
 
-         // rd_ack 受信を記録
          if(rd_ack == 1 && buffer_rd_ack == 0) begin
             buffer_rd_ack <= 1;
          end
 
          if(buffer_rd_ack == 1) begin
-            rd_data_available <= 0;
+            if(rx_fifo_count > 0) begin
+               rx_fifo_rd_ptr <= rx_fifo_rd_ptr + 1'b1;
+               rx_fifo_count <= rx_fifo_count - 1'b1;
+               if(rx_fifo_count > 1) begin
+                  rd_data <= rx_fifo[rx_fifo_rd_ptr + 1'b1];
+                  rd_data_available <= 1;
+               end else begin
+                  rd_data_available <= 0;
+               end
+            end else begin
+               rd_data_available <= 0;
+            end
             buffer_rd_ack <= 0;
          end
 
-         //write to the queue
          if (wr_en == 1 && (~wr_reg_full) && (~wr_queue_full) ) begin
             wr_queue_full <= 1;
             wr_data_queue <= wr_data;
          end
 
-         //move from queue to reg only when no com (counter_read == 0)
          if(wr_queue_full == 1 && counter_read == 0) begin
             wr_data_reg <= wr_data_queue;
             wr_queue_full <= 0;
