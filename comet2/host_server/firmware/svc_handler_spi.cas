@@ -35,9 +35,9 @@ SPOLLP   CPL     GR4,=0          ; 残り文字数が 0 か確認
          SUBL    GR4,=1          ; 残り文字数を 1 減らす
          ADDA    GR1,=1          ; バッファポインタを次の文字へ進める
          JUMP    SPOLLP          ; 次の文字の送信へ
-SPORET   LD      GR3,0,GR2       ; GR3 <- 元の送信要求文字数（*GR2）
-         SUBL    GR3,GR4         ; 実際に送った文字数 = 元の文字数 - 残り文字数
-         ST      GR3,0,GR2       ; *GR2 に実送信文字数を書き戻す
+;SPORET   LD      GR3,0,GR2       ; GR3 <- 元の送信要求文字数（*GR2）
+;         SUBL    GR3,GR4         ; 実際に送った文字数 = 元の文字数 - 残り文字数
+;         ST      GR3,0,GR2       ; *GR2 に実送信文字数を書き戻す
 SPORET   POP     GR4             ; GR4 を復帰
          POP     GR3             ; GR3 を復帰
          RET                     ; 呼び出し元へ戻る

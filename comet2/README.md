@@ -164,10 +164,30 @@ Examples:
 ./comet2_spi_run --probe-reload -f ./firmware/hanoi.bin
 ```
 
-`comet2_spi_run` keeps a long idle timeout while input is still open, but after
-Ctrl-D / EOF it now waits only a short drain window before returning to the
-shell. Use `-e <ms>` to tune that post-EOF drain time if a firmware needs more
-time to print trailing output.
+`comet2_spi_run` and `comet2_spi_loader` both support interactive line editing
+for firmware that uses SPI-backed `SVC 1`.
+
+- `Backspace` / `Delete`: remove one not-yet-sent input character from the
+  current host-side line buffer
+- `Ctrl-D` at the beginning of a line: send a single `0x04` byte so the
+  SPI/UART SVC handlers can return `-1` for `IN`
+- `Ctrl-D` after one or more characters: treat it as end-of-line and send the
+  buffered line
+
+`comet2_spi_run` also exits immediately on `Ctrl-C`.
+
+Both tools support local echo control in interactive mode:
+
+- `--local-echo` / `--no-local-echo`
+- `--echo-newline` / `--no-echo-newline`
+
+The current defaults differ slightly:
+
+- `comet2_spi_run`: local echo on, newline echo on
+- `comet2_spi_loader`: local echo on, newline echo off
+
+`comet2_spi_run` still supports `-e <ms>` to tune the post-EOF drain window for
+non-interactive EOF cases.
 
 Optional input bytes can be sent through `SVC 1`.
 
@@ -181,7 +201,28 @@ The host collects bytes produced by `SVC 2` into a 256-byte receive buffer. If
 the program outputs more than that, excess bytes are drained from SPI and
 discarded.
 
-## UART console MMIO
+## Firmware Build Variants
+
+`host_server/firmware/Makefile` now selects the SVC vector/runtime pair with
+`IO_VARIANT`.
+
+- `IO_VARIANT=uart`
+  Uses `vector_uart.cas` and `svc_handler_uart.cas`
+- `IO_VARIANT=spi`
+  Uses `vector_spi.cas` and `svc_handler_spi.cas`
+
+Example:
+
+```sh
+cd host_server/firmware
+make IO_VARIANT=uart echo.bin
+make IO_VARIANT=spi echo.bin
+```
+
+The generated output filename is the same in both modes, so building the second
+variant overwrites the first unless you rename or copy the `.bin`.
+
+## UART Console MMIO
 
 In the default `top.v` build, UART is mapped at `0xF200`-`0xF203`.
 
@@ -191,16 +232,17 @@ In the default `top.v` build, UART is mapped at `0xF200`-`0xF203`.
 - `0xF202`: TX data, write low byte to send
 - `0xF203`: control, write bit0=`1` to clear RX overflow
 
-Sample UART-backed SVC handlers are in
-[`host_server/firmware/inout_uart.cas`](host_server/firmware/inout_uart.cas).
-A minimal UART echo test program is in
-[`host_server/firmware/uart_echo.cas`](host_server/firmware/uart_echo.cas).
-A TX-only UART test program is in
-[`host_server/firmware/uart_tx_test.cas`](host_server/firmware/uart_tx_test.cas).
-A direct MMIO TX test program is in
-[`host_server/firmware/uart_tx_mmio_test.cas`](host_server/firmware/uart_tx_mmio_test.cas).
-A direct MMIO RX echo test program is in
-[`host_server/firmware/uart_rx_mmio_echo.cas`](host_server/firmware/uart_rx_mmio_echo.cas).
+Current UART-backed SVC handlers are in
+[`host_server/firmware/svc_handler_uart.cas`](host_server/firmware/svc_handler_uart.cas).
+
+Current sample programs in `host_server/firmware/`:
+
+- [`echo.cas`](host_server/firmware/echo.cas): `IN` / `OUT` echo loop
+- [`tx_test.cas`](host_server/firmware/tx_test.cas): repeated `OUT` test
+- [`mmio_uart_tx_test.cas`](host_server/firmware/mmio_uart_tx_test.cas): direct UART TX MMIO test
+- [`mmio_uart_rxtx_test.cas`](host_server/firmware/mmio_uart_rxtx_test.cas): direct UART RX/TX MMIO echo test
+- [`mmio_timer_test.cas`](host_server/firmware/mmio_timer_test.cas): timer + UART MMIO polling test
+- [`hanoi.cas`](host_server/firmware/hanoi.cas): larger sample program
 
 `host_server/firmware` では `make` で主要サンプルの `.bin` をまとめて生成できます。
 
@@ -208,45 +250,45 @@ Example build flow:
 
 ```sh
 cd host_server/firmware
-make uart_echo.bin
+make IO_VARIANT=uart echo.bin
 ```
 
-`hanoi` を UART コンソールで流したい場合は従来どおりこちらです。
+`echo.bin` を UART コンソール向けに作るならこちらです。
 
 ```sh
 cd host_server/firmware
-python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
-python3 ../asm_tools/casl2_asm/casl2.py -x hanoi.cas
-python3 ../asm_tools/casl2_asm/casl2.py -x inout_uart.cas
-python3 ../asm_tools/obj2bin.py --no-runtime init.obj hanoi.obj inout_uart.obj -o hanoi_uart.bin
+make IO_VARIANT=uart echo.bin
 ```
 
 TX 単体確認ならこちらです。
 
 ```sh
 cd host_server/firmware
-python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
-python3 ../asm_tools/casl2_asm/casl2.py -x uart_tx_test.cas
-python3 ../asm_tools/casl2_asm/casl2.py -x inout_uart.cas
-python3 ../asm_tools/obj2bin.py --no-runtime init.obj uart_tx_test.obj inout_uart.obj -o uart_tx_test.bin
+make IO_VARIANT=uart tx_test.bin
 ```
 
 `OUT` / `SVC 2` を通さず UART MMIO を直叩きして切り分けるならこちらです。
 
 ```sh
 cd host_server/firmware
-python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
-python3 ../asm_tools/casl2_asm/casl2.py -x uart_tx_mmio_test.cas
-python3 ../asm_tools/obj2bin.py --no-runtime init.obj uart_tx_mmio_test.obj -o uart_tx_mmio_test.bin
+make IO_VARIANT=uart mmio_uart_tx_test.bin
 ```
 
 RX も含めて MMIO 直結で echo を確認するならこちらです。
 
 ```sh
 cd host_server/firmware
-python3 ../asm_tools/casl2_asm/casl2.py -x init.cas
-python3 ../asm_tools/casl2_asm/casl2.py -x uart_rx_mmio_echo.cas
-python3 ../asm_tools/obj2bin.py --no-runtime init.obj uart_rx_mmio_echo.obj -o uart_rx_mmio_echo.bin
+make IO_VARIANT=uart mmio_uart_rxtx_test.bin
+```
+
+SPI-backed `IN` / `OUT` handlers are in
+[`host_server/firmware/svc_handler_spi.cas`](host_server/firmware/svc_handler_spi.cas).
+SPI variant firmware can be built with the same sample sources by selecting
+`IO_VARIANT=spi`.
+
+```sh
+cd host_server/firmware
+make IO_VARIANT=spi echo.bin
 ```
 
 ## Timer MMIO
@@ -272,12 +314,12 @@ Typical one-shot flow:
 This timer does not generate CPU interrupts yet. It is intended for busy-wait
 or periodic polling from COMET II software.
 
-A simple UART-backed timer polling sample is in
-[`host_server/firmware/timer_mmio_uart_test.cas`](host_server/firmware/timer_mmio_uart_test.cas).
+A simple timer polling sample is in
+[`host_server/firmware/mmio_timer_test.cas`](host_server/firmware/mmio_timer_test.cas).
 It programs the timer for about 1 second, waits for `fired`, prints `TICK`,
 and repeats forever.
 
 ```sh
 cd host_server/firmware
-make timer_mmio_uart_test.bin
+make IO_VARIANT=uart mmio_timer_test.bin
 ```
